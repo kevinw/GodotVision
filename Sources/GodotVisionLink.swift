@@ -59,6 +59,7 @@ public struct GodotVisionRealityViewModifier: ViewModifier {
     }
 }
 
+// TODO: remove this struct entirely! we used to run Godot on a background thread, and used this to communicate all the "rendering" data back to the main thread. but now that the two loops are intertwined it may not be necessary.
 struct DrawEntry {
     var name: String? = nil
     var instanceId: Int64 = 0
@@ -460,6 +461,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         
         let (drawEntries, generation, volumeCameraPosition, godotInstanceIDsRemovedFromTree, audioStreamPlays) = (interThread.drawEntries, interThread.generation, interThread.volumeCameraPosition, interThread.godotInstanceIDsRemovedFromTree, interThread.audioStreamPlays)
+
+        interThread.godotInstanceIDsRemovedFromTree.removeAll()
+        interThread.audioStreamPlays.removeAll()
         
         func entity(forGodotInstanceID godotInstanceId: Int64) -> Entity? {
             if let entityID = godotInstanceIDToEntityID[godotInstanceId] {
