@@ -2,6 +2,8 @@
 
 Godot headless on visionOS, rendered with RealityKit. 
 
+See [GodotVisionExample](https://github.com/multijam/GodotVisionExample) for a simple repository you can clone and run in Xcode.
+
 ## Roadmap
 
 To add
