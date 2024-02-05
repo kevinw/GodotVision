@@ -50,6 +50,8 @@ class ResourceEntry<G, R> where G: SwiftGodot.Resource {
     fileprivate var changedToken: SwiftGodot.Object? = nil
     
     func onChanged() {
+        // TODO: haven't actually verified this works...
+        
         print("\(Self.self) CHANGED", String(describing: godotResource))
         DispatchQueue.main.async {
             self._createdRealityKitResource = nil
@@ -74,8 +76,7 @@ class ResourceEntry<G, R> where G: SwiftGodot.Resource {
 class TextureEntry: ResourceEntry<SwiftGodot.Texture, RealityKit.TextureResource> {
     func getTexture(resourceCache: ResourceCache) -> RealityKit.TextureResource {
         if let godotTex = godotResource as? SwiftGodot.Texture2D {
-            let fileUrl = getGodotProjectURL().appendingPathComponent(godotTex.resourcePath.removingStringPrefix("res://"))
-            return try! .load(contentsOf: fileUrl)
+            return try! .load(contentsOf: fileUrl(forGodotResourcePath: godotTex.resourcePath))
         }
         
         return try! .load(named: "error-unknown-texture")
@@ -87,6 +88,9 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
         if _createdRealityKitResource == nil, let godotResource {
             if let stdMat = godotResource as? StandardMaterial3D {
                 var rkMat = PhysicallyBasedMaterial()
+                
+                // TODO: flesh this out so that we respect as many Godot PBR fields as possible.
+                // also should work for godot's ORMMaterial as well
                 
                 if let albedoTexture = stdMat.albedoTexture {
                     let textureEntry = resourceCache.textureEntry(forGodotTexture: albedoTexture)

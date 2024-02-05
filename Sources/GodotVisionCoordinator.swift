@@ -11,7 +11,6 @@ import SwiftGodotKit
 private let whiteNonMetallic = SimpleMaterial(color: .white, isMetallic: false)
 
 let VISION_VOLUME_CAMERA_GODOT_NODE_NAME = "VisionVolumeCamera"
-let REVIEW_REQUEST_NODE_NAME = "RequestReview"
 let SHOW_CORNERS = false
 
 enum ShapeSubType {
@@ -22,44 +21,7 @@ enum ShapeSubType {
     case Mesh(MeshEntry)
 }
 
-struct MaterialDesc {
-    var albedoColor: SwiftGodot.Color = .white
-    
-}
-
-public struct GodotVisionRealityViewModifier: ViewModifier {
-    var coordinator: GodotVisionCoordinator
-
-    public init(coordinator: GodotVisionCoordinator) {
-        self.coordinator = coordinator
-    }
-
-    public func body(content: Content) -> some View {
-        content
-            .gesture(SpatialTapGesture().targetedToAnyEntity().onEnded { event in
-                if event.entity.components.has(InputTargetComponent.self) {
-                    coordinator.receivedTap(event: event)
-                }
-            })
-            .gesture(DragGesture().targetedToAnyEntity().onChanged({value in
-                if value.entity.components.has(InputTargetComponent.self) {
-                    coordinator.receivedDrag(value)
-                }
-            }).onEnded({value in
-                if value.entity.components.has(InputTargetComponent.self) {
-                    coordinator.receivedDragEnded(value)
-                }
-            }))
-            .onAppear {
-                coordinator.initGodot()
-            }
-            .onDisappear {
-                coordinator.viewDidDisappear()
-            }
-    }
-}
-
-// TODO: remove this struct entirely! we used to run Godot on a background thread, and used this to communicate all the "rendering" data back to the main thread. but now that the two loops are intertwined it may not be necessary.
+// TODO: Maybe remove this struct entirely? we used to run Godot on a background thread, and used this to communicate all the "rendering" data back to the main thread. but now that the two loops are intertwined it may not be necessary.
 struct DrawEntry {
     var name: String? = nil
     var instanceId: Int64 = 0
@@ -78,12 +40,7 @@ struct DrawEntry {
 struct InterThread {
     var drawEntries: [DrawEntry] = []
     var generation: UInt64 = 0
-    var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
-    var volumeCameraPosition: simd_float3 = .zero
-    var volumeCameraBoxSize: simd_float3 = .one
-    var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
     
-    var audioStreamPlays: [AudioStreamPlay] = []
 }
 
 struct AudioStreamPlay {
@@ -93,21 +50,33 @@ struct AudioStreamPlay {
 }
 
 public class GodotVisionCoordinator: NSObject, ObservableObject {
+    struct InitOptions {
+        var godotProjectFileUrl: URL? = nil /// Where to find the Godot project files. Defaults to `Godot_Project` in the main application bundle.
+    }
+    
     private var godotInstanceIDToEntityID: [Int64: Entity.ID] = [:]
     
-    private var physicsEntitiesParent: Entity! = nil
-    private var frameCount = 0
+    private var godotEntitiesParent: Entity! = nil /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
     private var eventSubscription: EventSubscription? = nil
-    private var sceneTreeListenerTokens: [SwiftGodot.Object] = []
+    private var nodeAddedToken: SwiftGodot.Object? = nil
+    private var nodeRemovedToken: SwiftGodot.Object? = nil
+    private var processFrameToken: SwiftGodot.Object? = nil
     private var receivedRootNode = false
-    private var mirroredGodotNodes: [Node3D] = []
+    private var mirroredGodotNodes: [Node3D] = [] /// Godot Node3Ds whose transforms we synchronize to RealityKit.
     private var interThread: InterThread = .init()
     private var resourceCache: ResourceCache = .init()
     private var lastRendereredGeneration: UInt64 = .max
     private var sceneTree: SceneTree? = nil
     private var volumeCamera: SwiftGodot.Node3D? = nil
+    private var audioStreamPlays: [AudioStreamPlay] = []
+    private var _audioResources: [String: AudioFileResource] = [:]
     
-    func reloadScene() {
+    private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
+    private var volumeCameraPosition: simd_float3 = .zero
+    private var volumeCameraBoxSize: simd_float3 = .one
+    private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
+    ///
+    public func reloadScene() {
         print("reloadScene currently doesn't work for loading a new version of the scene saved from the editor, since Xcode copies the Godot_Project into the application's bundle only once at build time.")
         resetRealityKit()
         if let sceneFilePath = self.sceneTree?.currentScene?.sceneFilePath {
@@ -116,33 +85,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             print("ERROR: cannot reload, no .sceneFilePath")
         }
     }
-    
-    // TODO: move me out of GodotVision
-    private func getAllScenes() -> [String] {
-        var allScenes: [String] = []
-        guard let enumerator = FileManager.default.enumerator(atPath: getProjectDir()) else {
-            print("ERROR: could not create DirectoryEnumerator")
-            return []
-        }
-        for case let filePath as String in enumerator {
-            if !filePath.starts(with: "scenes/") {
-                continue
-            }
-            do {
-                let fileURL = URL(filePath: filePath)
-                let fileAttributes = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
-                if fileAttributes.isRegularFile ?? false, fileURL.pathExtension.lowercased() == "tscn" {
-                    print(fileURL.pathExtension, filePath)
-                    allScenes.append(filePath)
-                }
-            } catch {
-                print(error, filePath)
-            }
-        }
-        return allScenes
-    }
 
-    func changeSceneToFile(atResourcePath sceneResourcePath: String) {
+    public func changeSceneToFile(atResourcePath sceneResourcePath: String) {
         guard let sceneTree else { return }
         print("CHANGING SCENE TO", sceneResourcePath)
         
@@ -157,10 +101,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if SwiftGodot.GodotError.ok != result {
             print("ERROR:", result)
         }
-    }
-    
-    func executeGodotTick() -> /* should_quit: */ Bool {
-        stepGodotFrame()
     }
     
     public func initGodot() {
@@ -189,12 +129,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private func receivedSceneTree(sceneTree: SwiftGodot.SceneTree) {
         print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
+        
         // the packfile load happens after this callback. so as a hack we use nodeAdded for now to notice a specially named root node coming into being.
-        sceneTreeListenerTokens.append(contentsOf: [
-            sceneTree.nodeAdded.connect(onNodeAdded),
-            sceneTree.nodeRemoved.connect(onNodeRemoved),
-            sceneTree.processFrame.connect(onGodotFrame),
-        ])
+        nodeAddedToken = sceneTree.nodeAdded.connect(onNodeAdded)
+        nodeRemovedToken = sceneTree.nodeRemoved.connect(onNodeRemoved)
+        processFrameToken = sceneTree.processFrame.connect(onGodotFrame)
+        
         self.sceneTree = sceneTree
     }
     
@@ -205,7 +145,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         // Tell RealityKit to remove its entity for this.
         let instanceID = node.getInstanceId()
-        let _ = interThread.godotInstanceIDsRemovedFromTree.insert(instanceID)
+        let _ = godotInstanceIDsRemovedFromTree.insert(instanceID)
     }
     
     private func onNodeAdded(_ node: SwiftGodot.Node) {
@@ -234,7 +174,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             node.addChild(node: GodotSwiftBridge.instance)
             GodotSwiftBridge.instance.onAudioStreamPlayed = { [weak self] (playInfo: AudioStreamPlay) -> Void in
                 guard let self else { return }
-                interThread.audioStreamPlays.append(playInfo)
+                audioStreamPlays.append(playInfo)
             }
         }
     }
@@ -278,9 +218,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         
         let godotVolumeBoxSize = simd_float3(boxShape3D.size)
-        interThread.volumeCameraBoxSize = godotVolumeBoxSize
+        volumeCameraBoxSize = godotVolumeBoxSize
         
-        let realityKitVolumeSize = interThread.realityKitVolumeSize
         let ratio = simd_float3(realityKitVolumeSize) / godotVolumeBoxSize
         // print("VOLUME RATIO", ratio)
         
@@ -289,17 +228,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             print("ERROR: expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
         }
         
-        DispatchQueue.main.async {
-            self.physicsEntitiesParent.scale = .one * max(max(ratio.x, ratio.y), ratio.z)
-        }
+        self.godotEntitiesParent.scale = .one * max(max(ratio.x, ratio.y), ratio.z)
     }
     
     func resetRealityKit() {
         assert(Thread.current.isMainThread)
-        interThread.audioStreamPlays.removeAll()
+        audioStreamPlays.removeAll()
         mirroredGodotNodes.removeAll()
         resourceCache.reset()
-        for child in physicsEntitiesParent.children.map({ $0 }) {
+        for child in godotEntitiesParent.children.map({ $0 }) {
             child.removeFromParent()
         }
     }
@@ -351,7 +288,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                                   visible: node.visible
             )
             
-            // TODO: maybe just always use the exact triangles from Godot? Not sure we even need to use box/sphere/capsule/etc from RealityKit...
+            // TODO: maybe just always use the exact triangles from Godot? Not sure we even need to use box/sphere/capsule/etc from RealityKit... at the very least, try to match the number of segments in the generated mesh, etc. Right now we just RK defaults for Sphere/Capsule/etc
+            
             entry.shape = .None
             
             if let meshInstance3D = node as? MeshInstance3D {
@@ -386,14 +324,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if let volumeCamera {
             // should do rotation too, but idk how to go from godot rotation to RK 'orientation'
             // ie: physicsEntitiesParent.orientation = some_function(volumeCamera.rotation)
-            interThread.volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -0.1
+            volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -0.1
         }
     }
     
     public func setupRealityKitScene(_ content: RealityViewContent, volumeSize: simd_double3) -> Entity {
         assert(Thread.current.isMainThread)
         
-        interThread.realityKitVolumeSize = volumeSize
+        realityKitVolumeSize = volumeSize
         
         if SHOW_CORNERS {
             // Place some cubes to show the edges of the realitykit volume.
@@ -419,13 +357,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             addAtPoint(.init(-half.x, -half.y, half.z))
         }
         
-        let physicsEntitiesParent = Entity()
-        physicsEntitiesParent.name = "physicsEntitiesParent"
-        
-        self.physicsEntitiesParent = physicsEntitiesParent
-        content.add(physicsEntitiesParent)
+        // Register a per-frame RealityKit update function.
         eventSubscription = content.subscribe(to: SceneEvents.Update.self, realityKitPerFrameTick)
-        return physicsEntitiesParent
+        
+        // Create a root Entity to store all our mirrored Godot nodes-turned-RealityKit entities.
+        let godotEntitiesParent = Entity()
+        godotEntitiesParent.name = "GODOTRK_ROOT"
+        self.godotEntitiesParent = godotEntitiesParent
+        content.add(godotEntitiesParent)
+        return godotEntitiesParent
     }
     
     public func viewDidDisappear() {
@@ -433,17 +373,30 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             eventSubscription.cancel()
             self.eventSubscription = nil
         }
+        
+        // Disconnect SceneTree signals
+        if let sceneTree {
+            if let nodeAddedToken {
+                sceneTree.nodeAdded.disconnect(nodeAddedToken)
+                self.nodeAddedToken = nil
+            }
+            if let nodeRemovedToken {
+                sceneTree.nodeRemoved.disconnect(nodeRemovedToken)
+                self.nodeRemovedToken = nil
+            }
+            if let processFrameToken {
+                sceneTree.processFrame.disconnect(processFrameToken)
+                self.processFrameToken = nil
+            }
+            self.sceneTree = nil
+        }
     }
     
-    private var _audioResources: [String: AudioFileResource] = [:]
-    
     func cacheAudioResource(resourcePath: String) -> AudioFileResource? {
-        let fileUrl = getGodotProjectURL().appendingPathComponent(resourcePath.removingStringPrefix("res://"))
-        
         var audioResource: AudioFileResource? = _audioResources[resourcePath]
         if audioResource == nil {
             do {
-                audioResource = try AudioFileResource.load(contentsOf: fileUrl)
+                audioResource = try AudioFileResource.load(contentsOf: fileUrl(forGodotResourcePath: resourcePath))
             } catch {
                 print("ERROR:", error)
                 return nil
@@ -451,20 +404,22 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             
             _audioResources[resourcePath] = audioResource
         }
-        
         return audioResource
     }
     
     func realityKitPerFrameTick(_ event: SceneEvents.Update) {
-        if executeGodotTick() {
+        if stepGodotFrame() {
             print("GODOT HAS QUIT")
+            // TODO: ask visionOS application to quit? or...?
         }
         
-        let (drawEntries, generation, volumeCameraPosition, godotInstanceIDsRemovedFromTree, audioStreamPlays) = (interThread.drawEntries, interThread.generation, interThread.volumeCameraPosition, interThread.godotInstanceIDsRemovedFromTree, interThread.audioStreamPlays)
-
-        interThread.godotInstanceIDsRemovedFromTree.removeAll()
-        interThread.audioStreamPlays.removeAll()
+        defer { 
+            audioStreamPlays.removeAll()
+            godotInstanceIDsRemovedFromTree.removeAll()
+        }
         
+        let (drawEntries, generation) = (interThread.drawEntries, interThread.generation)
+
         func entity(forGodotInstanceID godotInstanceId: Int64) -> Entity? {
             if let entityID = godotInstanceIDToEntityID[godotInstanceId] {
                return event.scene.findEntity(id: entityID)
@@ -490,7 +445,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             entity.removeFromParent()
         }
         
-        physicsEntitiesParent.position = volumeCameraPosition
+        godotEntitiesParent.position = volumeCameraPosition
         if generation == lastRendereredGeneration { return }
         lastRendereredGeneration = generation
         
@@ -533,7 +488,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 entityID = modelEntity.id
                 entity = modelEntity
                 godotInstanceIDToEntityID[drawEntry.instanceId] = modelEntity.id
-                physicsEntitiesParent.addChild(modelEntity)
+                godotEntitiesParent.addChild(modelEntity)
                 
                 // we only want to set shadows on entities with a mesh
                 switch drawEntry.shape {
@@ -555,21 +510,21 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                         
                         // TODO: this is a dummy collision shape from the visual bounds of the entity. we can do something smarter based on the actual godot shapes!
                         
-                        modelEntity.components.set(InputTargetComponent()) // TODO: we probably don't ALWAYS want the visual highlight for pickable things. how to configure this from Godot?
-                        modelEntity.components.set(HoverEffectComponent())
+                        modelEntity.components.set(InputTargetComponent())
+                        modelEntity.components.set(HoverEffectComponent()) // TODO: we probably don't ALWAYS want the visual highlight for pickable things. how to configure this from Godot?
                         modelEntity.components.set(collision)
                         
                     }
                 }
             }
             
-            frameCount += 1
             if let entity {
                 let parentRKID = godotInstanceIDToEntityID[drawEntry.parentId]
                 if drawEntry.parentId > 0 && parentRKID == nil {
                     if retriedIndex[index] ?? false {
                         print("ERROR: no parent in bodyIDToEntityMap for", drawEntry.parentId)
                     } else {
+                        // Account for if drawEntries has children specified before parents (just put this entity back on the list to try later)
                         retriedIndex[index] = true
                         indices.append(index)
                     }
@@ -582,7 +537,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 entity.position = drawEntry.position
                 entity.orientation = drawEntry.rotation
                 entity.scale = drawEntry.scale
-                entity.isEnabled = drawEntry.visible // TODO: Godot visibility might still do _process..., but I'm pretty sure Entity.isEnabled with false will disable processing for the corresponding RealityKit Entity. maybe not a problem?
+                entity.isEnabled = drawEntry.visible // TODO: Godot visibility might still do _process..., but I'm pretty sure Entity.isEnabled with false will disable processing for the corresponding RealityKit Entity. This will probably be a problem.
             }
         }
         
@@ -605,8 +560,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let startLocation3D = value.convert(value.startLocation3D, from: .local, to: .scene)
         let location3D = value.convert(value.location3D, from: .local, to: .scene)
         
-        let godotStartLocation = physicsEntitiesParent.convert(position: simd_float3(startLocation3D), from: nil)
-        let godotLocation = physicsEntitiesParent.convert(position: simd_float3(location3D), from: nil) + simd_float3(0, 0, interThread.volumeCameraBoxSize.z * 0.5)
+        let godotStartLocation = godotEntitiesParent.convert(position: simd_float3(startLocation3D), from: nil)
+        let godotLocation = godotEntitiesParent.convert(position: simd_float3(location3D), from: nil) + simd_float3(0, 0, volumeCameraBoxSize.z * 0.5)
         
         guard let obj = self.godotInstanceFromRealityKitEntityID(value.entity.id) else { return }
         if obj.hasSignal("drag") {
@@ -623,17 +578,19 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     /// RealityKit has received a SpatialTapGesture in the RealityView
     func receivedTap(event: EntityTargetValue<SpatialTapGesture.Value>) {
-        
         let sceneLoc = event.convert(event.location3D, from: .local, to: .scene)
-        var godotLocation = physicsEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil)
-        godotLocation += .init(0, 0, interThread.volumeCameraBoxSize.z * 0.5)
+        var godotLocation = godotEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil)
+        godotLocation += .init(0, 0, volumeCameraBoxSize.z * 0.5)
         
-        // TODO: hack. not always right. currently this just pretends everything you tap is a sphere???
+        // TODO: hack. this normal is not always right. currently this just pretends everything you tap is a sphere???
+        
         let realityKitNormal = normalize(event.entity.position(relativeTo: nil) - sceneLoc)
         let godotNormal = realityKitNormal
         
         guard let obj = self.godotInstanceFromRealityKitEntityID(event.entity.id) else { return }
             
+        // Construct an InputEventMouseButton to send to Godot.
+        
         let godotEvent = InputEventMouseButton()
         godotEvent.buttonIndex = .left
         godotEvent.doubleClick = false // TODO

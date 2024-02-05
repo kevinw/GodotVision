@@ -25,6 +25,10 @@ func getPackFileURLString() -> String {
     return url.absoluteString.removingStringPrefix("file://")
 }
 
+func fileUrl(forGodotResourcePath resourcePath: String) -> URL {
+    getGodotProjectURL().appendingPathComponent(resourcePath.removingStringPrefix("res://"))
+}
+
 func getGodotProjectURL() -> URL {
     let projectFolderName = "Godot_Project"
     guard let url = Bundle.main.url(forResource: projectFolderName, withExtension: nil) else {
