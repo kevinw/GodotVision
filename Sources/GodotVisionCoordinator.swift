@@ -1,3 +1,9 @@
+/**
+ 
+Mirror Node3Ds from Godot to RealityKit.
+ 
+ */
+
 //  Created by Kevin Watters on 1/3/24.
 
 let HANDLE_RUNLOOP_MANUALLY = true
