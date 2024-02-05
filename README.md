@@ -12,8 +12,11 @@ A big hack!
 
 [SwiftGodot](https://github.com/migueldeicaza/SwiftGodot)'s Godot-as-a-library, recompiled for visionOS. Godot thinks it is a headless iOS template release build, and we add an extra ability--to tick the Godot loop from the outside world. Then we intersperse the RealityKit main loop and the Godot main loop, and watch the Godot SceneTree for Node3Ds, and mirror meshes, textures, and sounds to the RealityKit world.
 
+Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDocs/documentation/swiftgodot/) documentation for how to 
+
 ## Limitations
 
+* Most importantly: **NO DOCUMENTATION YET** - coming soon!
 * No skinned meshes yet.
 * No shaders yet.
 * Not all of PBR material options yet (this is an easier pull request!)
@@ -49,3 +52,4 @@ A big hack!
 ### Long term
 
 * Use the upcoming Godot Metal port and share textures/buffers directly when possible. Find out what kinds of shader translation are "easy" in this shiny new Metal world
+* A build system so you can make a super thin version of Godot without any of the modules you don't need.
