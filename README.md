@@ -12,7 +12,7 @@ A big hack!
 
 [SwiftGodot](https://github.com/migueldeicaza/SwiftGodot)'s Godot-as-a-library, recompiled for visionOS. Godot thinks it is a headless iOS template release build, and we add an extra ability--to tick the Godot loop from the outside world. Then we intersperse the RealityKit main loop and the Godot main loop, and watch the Godot SceneTree for Node3Ds, and mirror meshes, textures, and sounds to the RealityKit world.
 
-Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDocs/documentation/swiftgodot/) documentation for how to 
+Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDocs/documentation/swiftgodot/) documentation for how to hack on SwiftGodot/this project.
 
 ## Limitations
 
@@ -43,7 +43,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 * Undo ugly InterThread/locking stuff now that we’re running on the main thread
 * More (prettier!) example scenes!
 * Skinned meshes
-* Use SwiftUI attachments in godot scene?
+* Use SwiftUI attachments in Godot scene?
 * Loading scenes from within Godot should work seamlessly
 * Support updating Godot project for released apps without an app store review cycle
 * Find a way to use the .godot compressed and imported textures/assets directly from builds, so that we don’t have to include what is essentially two copies of all assets.
@@ -52,4 +52,4 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 ### Long term
 
 * Use the upcoming Godot Metal port and share textures/buffers directly when possible. Find out what kinds of shader translation are "easy" in this shiny new Metal world
-* A build system so you can make a super thin version of Godot without any of the modules you don't need.
+* A build system so you can make a super thin version of Godot without any of the modules you don't need, shrinking the final binary size.
