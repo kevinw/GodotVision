@@ -21,6 +21,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 * Most importantly: **NO DOCUMENTATION YET** - coming soon!
 * No skinned meshes yet.
 * No shaders yet.
+* No particle systems
 * Not all of PBR material options yet (this is an easier pull request!)
 * Lots of unpicked low hanging performance fruit on the tree:
     * Some modifications to Godot proper reserving us a bit somewhere for "node position/rotation/scale" changed might mean that static objects have almost no performance cost.
@@ -43,6 +44,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
     * HTTP server serving the PCK file? Or simply the directory? Investigate how easy it would be to add (or use an existing) network layer to the Godot filesystem stuff.
 * ~~Audio sound effects via AudioStreamPlayer3D~~
 * Undo ugly InterThread/locking stuff now that we’re running on the main thread
+* A nice way to substitute RealityKit authored stuff for Godot nodes; i.e., maybe you have a particle system you want to use based on some flag/layer/node name, etc.
 * More (prettier!) example scenes!
 * Skinned meshes
 * Use SwiftUI attachments in Godot scene?
