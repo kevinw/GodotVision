@@ -1,6 +1,6 @@
 # GodotVision
 
-Godot headless on visionOS, rendered with RealityKit. 
+Godot headless on visionOS, rendered with RealityKit, so you can create shared-space visionOS experiences from Godot.
 
 See [GodotVisionExample](https://github.com/kevinw/GodotVisionExample) for a simple repository you can clone and run in Xcode.
 
@@ -10,7 +10,7 @@ See [GodotVisionExample](https://github.com/kevinw/GodotVisionExample) for a sim
 
 A big hack!
 
-SwiftGodot's Godot-as-a-library, recompiled for visionOS. Godot thinks it is a headless iOS template release build, and we add an extra ability--to tick the Godot loop from the outside world. Then we intersperse the RealityKit main loop and the Godot main loop, and watch the Godot SceneTree for Node3Ds, and mirror meshes, textures, and sounds to the RealityKit world.
+[SwiftGodot](https://github.com/migueldeicaza/SwiftGodot)'s Godot-as-a-library, recompiled for visionOS. Godot thinks it is a headless iOS template release build, and we add an extra ability--to tick the Godot loop from the outside world. Then we intersperse the RealityKit main loop and the Godot main loop, and watch the Godot SceneTree for Node3Ds, and mirror meshes, textures, and sounds to the RealityKit world.
 
 ## Limitations
 
@@ -23,7 +23,7 @@ SwiftGodot's Godot-as-a-library, recompiled for visionOS. Godot thinks it is a h
 
 ## Roadmap
 
-To fix
+### To fix
 
 * Pinch and drag should look more like the normal Godot input event flow; currenlty we manually look for "drag" and "drag_ended" signals. See the "hello" example.
 * Print statements appear twice in the Xcode console
@@ -32,7 +32,7 @@ To fix
 * Document the [minor changes we made to Godot's ios backend](https://github.com/multijam/godot)
 * The application view lifecycle is probably wrong. We throw away all state for SwiftUI .didDisappear.
 
-To add
+### To add
 
 * Live reload of Godot scene if saved from the editor
     * HTTP server serving the PCK file? Or simply the directory? Investigate how easy it would be to add (or use an existing) network layer to the Godot filesystem stuff.
@@ -46,6 +46,6 @@ To add
 * Find a way to use the .godot compressed and imported textures/assets directly from builds, so that we don’t have to include what is essentially two copies of all assets.
 * Possibly use Godot’s CompressedTexture2D directly to load textures, etc.
 
-Long term
+### Long term
 
 * Use the upcoming Godot Metal port and share textures/buffers directly when possible. Find out what kinds of shader translation are "easy" in this shiny new Metal world
