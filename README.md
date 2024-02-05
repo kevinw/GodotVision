@@ -23,6 +23,7 @@ To fix
 * Cleanup / document the notion of scale
 * By default, scale should be 1 meter in Godot equals 1 meter in RealityKit
 * Document the [minor changes we made to Godot's ios backend](https://github.com/multijam/godot)
+* The application view lifecycle is probably wrong. We throw away all state for SwiftUI .didDisappear.
 
 To add
 
