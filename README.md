@@ -1,5 +1,7 @@
 # GodotVision
 
+### Questions? Join the SwiftGodot [Slack community here](https://join.slack.com/t/swiftongodot/shared_invite/zt-2aqygohvb-stSRGEAN~c3awuMwtaqCAA)
+
 Godot headless on visionOS, rendered with RealityKit, so you can create shared-space visionOS experiences from Godot.
 
 See [GodotVisionExample](https://github.com/kevinw/GodotVisionExample) for a simple repository you can clone and run in Xcode.
