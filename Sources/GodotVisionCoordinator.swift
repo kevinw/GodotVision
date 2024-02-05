@@ -556,17 +556,25 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         return nil
     }
     
+    func rkGestureLocationToGodotWorldPosition(_ value: EntityTargetValue<DragGesture.Value>, _ point3D: Point3D) -> SwiftGodot.Vector3 {
+        //
+        // TODO: this is 100% not actually correct.
+        //
+        let sceneLoc = value.convert(point3D, from: .local, to: .scene)
+        let godotLoc = godotEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil) + simd_float3(0, 0, volumeCameraBoxSize.z * 0.5)
+        return .init(godotLoc)
+    }
+    
     func receivedDrag(_ value: EntityTargetValue<DragGesture.Value>) {
-        let startLocation3D = value.convert(value.startLocation3D, from: .local, to: .scene)
-        let location3D = value.convert(value.location3D, from: .local, to: .scene)
-        
-        let godotStartLocation = godotEntitiesParent.convert(position: simd_float3(startLocation3D), from: nil)
-        let godotLocation = godotEntitiesParent.convert(position: simd_float3(location3D), from: nil) + simd_float3(0, 0, volumeCameraBoxSize.z * 0.5)
-        
         guard let obj = self.godotInstanceFromRealityKitEntityID(value.entity.id) else { return }
-        if obj.hasSignal("drag") {
-            obj.emitSignal("drag", Variant(SwiftGodot.Vector3(godotLocation)), Variant(SwiftGodot.Vector3(godotStartLocation)))
+        if !obj.hasSignal("drag") {
+            return
         }
+            
+        let godotStartLocation = rkGestureLocationToGodotWorldPosition(value, value.startLocation3D)
+        let godotLocation = rkGestureLocationToGodotWorldPosition(value, value.location3D)
+        
+        obj.emitSignal("drag", Variant(godotLocation), Variant(godotStartLocation))
     }
     
     func receivedDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {

@@ -6,6 +6,12 @@ See [GodotVisionExample](https://github.com/kevinw/GodotVisionExample) for a sim
 
 ![example image](https://raw.githubusercontent.com/kevinw/GodotVisionExample/main/docs/screenshot1.jpg)
 
+## What is this?
+
+A big hack!
+
+SwiftGodot's Godot-as-a-library, recompiled for visionOS. Godot thinks it is a headless iOS template release build, and we add an extra ability--to tick the Godot loop from the outside world. Then we intersperse the RealityKit main loop and the Godot main loop, and watch the Godot SceneTree for Node3Ds, and mirror meshes, textures, and sounds to the RealityKit world.
+
 ## Limitations
 
 * No skinned meshes yet.
