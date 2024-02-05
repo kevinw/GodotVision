@@ -25,6 +25,7 @@ SwiftGodot's Godot-as-a-library, recompiled for visionOS. Godot thinks it is a h
 
 To fix
 
+* Pinch and drag should look more like the normal Godot input event flow; currenlty we manually look for "drag" and "drag_ended" signals. See the "hello" example.
 * Print statements appear twice in the Xcode console
 * Cleanup / document the notion of scale
 * By default, scale should be 1 meter in Godot equals 1 meter in RealityKit
