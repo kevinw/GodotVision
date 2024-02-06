@@ -33,6 +33,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 ### To fix
 
 * Pinch and drag should look more like the normal Godot input event flow; currently we manually look for `drag` and `drag_ended` signals. See the "hello" example.
+* The logic for converting RealityKit gesture locations into Godot Vector3 world positions is a bit off, and may be very off if the "volume camera" moves
 * Print statements appear twice in the Xcode console
 * By default, scale should be 1 meter in Godot equals 1 meter in RealityKit
 * Cleanup / document the notion of scale
