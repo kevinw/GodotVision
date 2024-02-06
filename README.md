@@ -12,7 +12,7 @@ See [GodotVisionExample](https://github.com/kevinw/GodotVisionExample) for a sim
 
 A big hack!
 
-[SwiftGodot](https://github.com/migueldeicaza/SwiftGodot)'s Godot-as-a-library, recompiled for visionOS. Godot thinks it is a headless iOS template release build, and we add an extra ability--to tick the Godot loop from the outside world. Then we intersperse the RealityKit main loop and the Godot main loop, and watch the Godot SceneTree for Node3Ds, and mirror meshes, textures, and sounds to the RealityKit world.
+[SwiftGodot](https://github.com/migueldeicaza/SwiftGodot)'s Godot-as-a-library, recompiled for visionOS. Godot ([slightly modified](https://github.com/multijam/godot/commits/visionos/?author=kevinw)) thinks it is a headless iOS template release build, and we add an extra ability--to tick the Godot loop from the outside world. Then we intersperse the RealityKit main loop and the Godot main loop, and watch the Godot SceneTree for Node3Ds, and mirror meshes, textures, and sounds to the RealityKit world.
 
 Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDocs/documentation/swiftgodot/) documentation for how to hack on SwiftGodot/this project.
 
