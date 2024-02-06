@@ -18,6 +18,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 
 ## Limitations
 
+* All mesh data is currently leaking; we're still working out some bugs in the ownership semantics between SwiftGodot and Godot's reference counted objects.
 * Missing:
     * Documentation
     * Skinned meshes ([Skeleton3D](https://docs.godotengine.org/en/stable/classes/class_skeleton3d.html))
