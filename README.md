@@ -18,29 +18,30 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 
 ## Limitations
 
-* Most importantly: **NO DOCUMENTATION YET** - coming soon!
-* No skinned meshes yet.
-* No shaders yet.
-* No particle systems
-* Not all of PBR material options yet (this is an easier pull request!)
+* Missing:
+    * Documentation
+    * Skinned meshes ([Skeleton3D](https://docs.godotengine.org/en/stable/classes/class_skeleton3d.html))
+    * Shaders
+    * Particle systems
+    * Many PBR material options
 * Lots of unpicked low hanging performance fruit on the tree:
     * Some modifications to Godot proper reserving us a bit somewhere for "node position/rotation/scale" changed might mean that static objects have almost no performance cost.
-* Any native GDExtensions you want to use need to be compiled for visionOS.
+* Any native GDExtensions you want to use (godot-jolt, etc.) need to be compiled for visionOS.
 
 ## Roadmap
 
 ### To fix
 
-* Pinch and drag should look more like the normal Godot input event flow; currenlty we manually look for "drag" and "drag_ended" signals. See the "hello" example.
+* Pinch and drag should look more like the normal Godot input event flow; currently we manually look for `drag` and `drag_ended` signals. See the "hello" example.
 * Print statements appear twice in the Xcode console
-* Cleanup / document the notion of scale
 * By default, scale should be 1 meter in Godot equals 1 meter in RealityKit
+* Cleanup / document the notion of scale
 * Document the [minor changes we made to Godot's ios backend](https://github.com/multijam/godot)
 * The application view lifecycle is probably wrong. We throw away all state for SwiftUI .didDisappear.
 
 ### To add
 
-* Live reload of Godot scene if saved from the editor
+* Live reload of Godot scene if saved from the editor 🤩
     * HTTP server serving the PCK file? Or simply the directory? Investigate how easy it would be to add (or use an existing) network layer to the Godot filesystem stuff.
 * ~~Audio sound effects via AudioStreamPlayer3D~~
 * Undo ugly InterThread/locking stuff now that we’re running on the main thread
