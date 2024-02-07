@@ -60,3 +60,4 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 
 * Use the upcoming Godot Metal port and share textures/buffers directly when possible. Find out what kinds of shader translation are "easy" in this shiny new Metal world
 * A build system so you can make a super thin version of Godot without any of the modules you don't need, shrinking the final binary size.
+* Investigate creating a [Godot "server"](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) so we could do one per-frame memcopy for position/rotation/translation of Nodes which have moved.
