@@ -301,15 +301,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             if let meshInstance3D = node as? MeshInstance3D {
                 var material: SwiftGodot.Material? = nil
                 if let mesh = meshInstance3D.mesh {
-                    if let box = mesh as? BoxMesh {
-                        entry.shape = .Box(size: simd_float3(box.size))
-                    } else if let sphere = mesh as? SphereMesh {
-                        entry.shape = .Sphere(radius: Float(sphere.radius))
-                    } else if let capsule = mesh as? CapsuleMesh {
-                        entry.shape = .Capsule(height: Float(capsule.height), radius: Float(capsule.radius))
-                    } else {
-                        entry.shape = .Mesh(resourceCache.meshEntry(forGodotMesh: mesh))
-                    }
+                    entry.shape = .Mesh(resourceCache.meshEntry(forGodotMesh: mesh))
                     
                     if mesh.getSurfaceCount() > 1 {
                         print("WARNING: mesh has more than one surface")
