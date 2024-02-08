@@ -517,7 +517,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                         // TODO: this is a dummy collision shape from the visual bounds of the entity. we can do something smarter based on the actual godot shapes!
                         
                         modelEntity.components.set(InputTargetComponent())
-                        modelEntity.components.set(HoverEffectComponent()) // TODO: we probably don't ALWAYS want the visual highlight for pickable things. how to configure this from Godot?
+//                        modelEntity.components.set(HoverEffectComponent()) // TODO: we probably don't ALWAYS want the visual highlight for pickable things. how to configure this from Godot?
                         modelEntity.components.set(collision)
                         
                     }
@@ -579,8 +579,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             
         let godotStartLocation = rkGestureLocationToGodotWorldPosition(value, value.startLocation3D)
         let godotLocation = rkGestureLocationToGodotWorldPosition(value, value.location3D)
+        let godotMomentumLocation = rkGestureLocationToGodotWorldPosition(value, value.predictedEndLocation3D)
         
-        obj.emitSignal("drag", Variant(godotLocation), Variant(godotStartLocation))
+        obj.emitSignal("drag", Variant(godotLocation), Variant(godotStartLocation), Variant(godotMomentumLocation))
     }
     
     func receivedDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
