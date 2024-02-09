@@ -571,8 +571,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             
         let godotStartLocation = rkGestureLocationToGodotWorldPosition(value, value.startLocation3D)
         let godotLocation = rkGestureLocationToGodotWorldPosition(value, value.location3D)
+        let godotPredictedEndLocation = rkGestureLocationToGodotWorldPosition(value, value.predictedEndLocation3D)
         
-        obj.emitSignal("drag", Variant(godotLocation), Variant(godotStartLocation))
+        obj.emitSignal("drag", Variant(godotLocation), Variant(godotStartLocation), Variant(godotPredictedEndLocation))
     }
     
     func receivedDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
