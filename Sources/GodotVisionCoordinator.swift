@@ -466,7 +466,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 switch drawEntry.shape {
                 case .Mesh(let meshEntry):
                     modelEntity = ModelEntity(mesh: meshEntry.meshResource, materials: materials ?? [whiteNonMetallic])
-                    // let bounds = modelEntity.visualBounds(relativeTo: nil)
                 case .None:
                     modelEntity = ModelEntity()
                 default:
