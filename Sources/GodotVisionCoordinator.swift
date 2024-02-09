@@ -40,7 +40,7 @@ struct DrawEntry {
     
     // properties to split off into an "instantiation packet"
     var shape: ShapeSubType = .None
-    var material: MaterialEntry? = nil
+    var materials: [MaterialEntry] = []
 }
 
 struct InterThread {
@@ -299,18 +299,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             entry.shape = .None
             
             if let meshInstance3D = node as? MeshInstance3D {
-                var material: SwiftGodot.Material? = nil
                 if let mesh = meshInstance3D.mesh {
                     entry.shape = .Mesh(resourceCache.meshEntry(forGodotMesh: mesh))
-                    
-                    if mesh.getSurfaceCount() > 1 {
-                        print("WARNING: mesh has more than one surface")
+                    for i in 0...mesh.getSurfaceCount() - 1 {
+                        var material: SwiftGodot.Material? = nil
+                        material = meshInstance3D.getActiveMaterial(surface: i)
+                        if let material {
+                            entry.materials.append(resourceCache.materialEntry(forGodotMaterial: material))
+                        }
                     }
-                    material = meshInstance3D.getActiveMaterial(surface: 0)
-                }
-                
-                if let material {
-                    entry.material = resourceCache.materialEntry(forGodotMaterial: material)
                 }
             }
             
@@ -458,27 +455,20 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 entity = event.scene.findEntity(id: entityID)
             } else {
                 var materials: [RealityKit.Material]? = nil
-                if let materialEntry = drawEntry.material {
-                    materials = [materialEntry.getMaterial(resourceCache: resourceCache)]
+                if !drawEntry.materials.isEmpty {
+                    materials = drawEntry.materials.map { entry in
+                        return entry.getMaterial(resourceCache: resourceCache)
+                    }
                 }
                 
                 var modelEntity: ModelEntity
                 
                 switch drawEntry.shape {
-                case .Sphere(let radius):
-                    let meshResource = MeshResource.generateSphere(radius: radius)
-                    modelEntity = ModelEntity(mesh: meshResource, materials: materials ?? [whiteNonMetallic])
-                case .Box(let size):
-                    let meshResource = MeshResource.generateBox(size: size)
-                    modelEntity = ModelEntity(mesh: meshResource, materials: materials ?? [whiteNonMetallic])
-                case .Capsule(let height, let radius):
-                    let size = simd_float3(radius * 2, height, radius * 2)
-                    let meshResource = MeshResource.generateBox(size: size, cornerRadius: radius)
-                    modelEntity = ModelEntity(mesh: meshResource, materials: materials ?? [whiteNonMetallic])
                 case .Mesh(let meshEntry):
                     modelEntity = ModelEntity(mesh: meshEntry.meshResource, materials: materials ?? [whiteNonMetallic])
-                    // let bounds = modelEntity.visualBounds(relativeTo: nil)
                 case .None:
+                    modelEntity = ModelEntity()
+                default:
                     modelEntity = ModelEntity()
                 }
                 

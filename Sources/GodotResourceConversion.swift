@@ -165,10 +165,14 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
         guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
         
         var meshDescriptor = MeshDescriptor(name: "vertices for godot mesh " + mesh.resourceName)
+        meshDescriptor.materials = .allFaces(UInt32(surfIdx))
         meshDescriptor.positions = MeshBuffer(vertices.map { simd_float3($0) })
         meshDescriptor.primitives = .triangles(reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) }))
         if let uvs = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue].cast(as: PackedVector2Array.self, debugName: "uvs") {
-            meshDescriptor.textureCoordinates = .init(uvs.map { simd_float2($0.x, 1.0 - $0.y) })
+            meshDescriptor.textureCoordinates = .init(uvs.map { point in
+                var translated_point = simd_float2(x: point.x, y: 1 - point.y)
+                return translated_point
+            })
         }
         
         meshDescriptors.append(meshDescriptor)
