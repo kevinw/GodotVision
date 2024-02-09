@@ -168,7 +168,57 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
         meshDescriptor.positions = MeshBuffer(vertices.map { simd_float3($0) })
         meshDescriptor.primitives = .triangles(reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) }))
         if let uvs = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue].cast(as: PackedVector2Array.self, debugName: "uvs") {
-            meshDescriptor.textureCoordinates = .init(uvs.map { simd_float2($0.x, 1.0 - $0.y) })
+            // something wrong with our UV mapping
+
+            
+            var min_x = Float(10)
+            var min_y = Float(10)
+            var max_x = Float(-10)
+            var max_y = Float(-10)
+            var index = 0
+            for uv in uvs {
+                if index == 0 {
+                    min_x = uv.x
+                    min_y = uv.y
+                    max_x = uv.x
+                    max_y = uv.y
+                } else {
+                    if uv.x < min_x {
+                        min_x = uv.x
+                    }
+                    if uv.x > max_x {
+                        max_x = uv.x
+                    }
+                    if uv.y < min_y {
+                        min_y = uv.y
+                    }
+                    if uv.y > max_y {
+                        max_y = uv.y
+                    }
+                }
+                index += 1
+            }
+            
+            print("uvs.count")
+            print(uvs.count)
+            print("min_x")
+            print(min_x)
+            print("max_x")
+            print(max_x)
+            print("min_y")
+            print(min_y)
+            print("max_y")
+            print(max_y)
+            
+            meshDescriptor.textureCoordinates = .init(uvs.map { point in
+//                var translated_point = simd_float2(x: 2 * (point.x - min_x / 2) - 0.5, y: 1 - ((2 * (point.y - min_y / 2)) - 0.5))
+                var translated_point = simd_float2(x: (point.x - min_x / 2), y: 1 - (((point.y - min_y / 2))))
+                print("point")
+                print(point)
+                print("translated_point")
+                print(translated_point)
+                return translated_point
+            })
         }
         
         meshDescriptors.append(meshDescriptor)
