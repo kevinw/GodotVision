@@ -36,6 +36,7 @@ struct DrawEntry {
     var rotation: simd_quatf = .init()
     var scale: simd_float3 = .one
     var inputRayPickable: ShapeSubType? = nil
+    var hoverEffect: Bool = false
     var visible: Bool = true
     
     // properties to split off into an "instantiation packet"
@@ -291,10 +292,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                                   rotation: .init(node.basis.getRotationQuaternion()),
                                   scale: .init(node.scale),
                                   inputRayPickable: inputRayPickable,
+                                  hoverEffect: .init(node.getMeta(name: "hover_effect", default: Variant(false))) ?? false,
                                   visible: node.visible
             )
-            
-            // TODO: maybe just always use the exact triangles from Godot? Not sure we even need to use box/sphere/capsule/etc from RealityKit... at the very least, try to match the number of segments in the generated mesh, etc. Right now we just RK defaults for Sphere/Capsule/etc
             
             entry.shape = .None
             
@@ -499,7 +499,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                         // TODO: this is a dummy collision shape from the visual bounds of the entity. we can do something smarter based on the actual godot shapes!
                         
                         modelEntity.components.set(InputTargetComponent())
-                        modelEntity.components.set(HoverEffectComponent()) // TODO: we probably don't ALWAYS want the visual highlight for pickable things. how to configure this from Godot?
+                        if drawEntry.hoverEffect {
+                            modelEntity.components.set(HoverEffectComponent())
+                        }
                         modelEntity.components.set(collision)
                         
                     }
