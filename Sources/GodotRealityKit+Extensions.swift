@@ -62,7 +62,7 @@ extension SwiftGodot.Variant {
     /// A utility method for initializing a specific type from a Variant. Prints an error message if the cast fails.
     func cast<T>(as t: T.Type, debugName: String = "value", printError: Bool = true) -> T? where T: InitsFromVariant {
         guard let result = T(self) else {
-            if printError { print("expected \(debugName) to be castable to a \(T.self)") }
+            if printError { print("expected \(debugName) to be castable to a \(T.self) - gtype is \(gtype)") }
             return nil
         }
         
