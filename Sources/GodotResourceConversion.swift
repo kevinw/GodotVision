@@ -42,6 +42,10 @@ class ResourceCache {
         }
         return textures[godotTexture]!
     }
+    
+    func rkTexture(forGodotTexture godotTexture: SwiftGodot.Texture) -> RealityKit.TextureResource {
+        textureEntry(forGodotTexture: godotTexture).getTexture(resourceCache: self)
+    }
 }
 
 class ResourceEntry<G, R> where G: SwiftGodot.Resource {
@@ -92,12 +96,13 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
                 // TODO: flesh this out so that we respect as many Godot PBR fields as possible.
                 // also should work for godot's ORMMaterial as well
                 
+                //
+                // ALBEDO (base color)
+                //
                 if let albedoTexture = stdMat.albedoTexture {
                     let textureEntry = resourceCache.textureEntry(forGodotTexture: albedoTexture)
                     let rkTexture = textureEntry.getTexture(resourceCache: resourceCache)
                     rkMat.baseColor = .init(tint: uiColor(forGodotColor: stdMat.albedoColor), texture: .init(rkTexture))
-                    rkMat.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: Float(stdMat.metallic))
-                    rkMat.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: Float(stdMat.roughness))
                 } else {
                     if stdMat.transparency == .alpha {
                         rkMat.baseColor = .init(tint: uiColor(forGodotColor: stdMat.albedoColor).withAlphaComponent(1.0))
@@ -105,9 +110,26 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
                     } else {
                         rkMat.baseColor = .init(tint: uiColor(forGodotColor: stdMat.albedoColor))
                     }
-                    rkMat.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: Float(stdMat.metallic))
-                    rkMat.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: Float(stdMat.roughness))
                 }
+                
+                rkMat.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: Float(stdMat.metallic))
+                rkMat.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: Float(stdMat.roughness))
+                
+                //
+                // EMISSION
+                //
+                if stdMat.emissionEnabled {
+                    let emissiveColor: PhysicallyBasedMaterial.EmissiveColor
+                    if let emissionTexture = stdMat.emissionTexture {
+                        emissiveColor  = .init(color: uiColor(forGodotColor: stdMat.emission), texture: .init(resourceCache.rkTexture(forGodotTexture: emissionTexture)))
+                    } else {
+                        emissiveColor = .init(color: uiColor(forGodotColor: stdMat.emission))
+                    }
+                    
+                    rkMat.emissiveColor = emissiveColor
+                    rkMat.emissiveIntensity = Float(stdMat.emissionIntensity / 1000.0) // TODO: Godot docs say Material.emission_intensity is specified in nits and defaults to 1000. not sure how to convert this, since the RealityKit docs don't specify a unit.
+                }
+                
                 _createdRealityKitResource = rkMat
             }
         }
