@@ -597,12 +597,20 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if !obj.hasSignal("drag") {
             return
         }
-            
-        let godotStartLocation = rkGestureLocationToGodotWorldPosition(value, value.startLocation3D)
-        let godotLocation = rkGestureLocationToGodotWorldPosition(value, value.location3D)
-        let godotPredictedEndLocation = rkGestureLocationToGodotWorldPosition(value, value.predictedEndLocation3D)
+
+        // pass a dictionary of values to the drag signal
+        let dict: GDictionary = .init()
+        dict["start_location"] = Variant(rkGestureLocationToGodotWorldPosition(value, value.startLocation3D))
+        dict["location"] = Variant(rkGestureLocationToGodotWorldPosition(value, value.location3D))
+        dict["predicted_end_location"] = Variant(rkGestureLocationToGodotWorldPosition(value, value.predictedEndLocation3D))
+        if let startInputDevicePose3D = value.startInputDevicePose3D,
+           let inputDevicePose3D = value.inputDevicePose3D 
+        {
+            dict["pose_rotation"] = Variant(SwiftGodot.Quaternion(inputDevicePose3D.rotation.quaternion))
+            dict["start_pose_rotation"] = Variant(SwiftGodot.Quaternion(startInputDevicePose3D.rotation.quaternion))
+        }
         
-        obj.emitSignal("drag", Variant(godotLocation), Variant(godotStartLocation), Variant(godotPredictedEndLocation))
+        obj.emitSignal("drag", Variant(dict))
     }
     
     func receivedDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {

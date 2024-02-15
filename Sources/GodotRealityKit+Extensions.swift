@@ -59,6 +59,26 @@ extension simd_float2 {
     }
 }
 
+extension SwiftGodot.Quaternion {
+    init(_ quat: simd_quatf) {
+        self.init()
+        let imaginary = quat.imag
+        self.w = quat.real
+        self.z = imaginary.z
+        self.y = imaginary.y
+        self.x = imaginary.x
+    }
+    
+    init(_ quat: simd_quatd) {
+        self.init()
+        let imaginary = quat.imag
+        self.w = Float(quat.real)
+        self.z = Float(imaginary.z)
+        self.y = Float(imaginary.y)
+        self.x = Float(imaginary.x)
+    }
+}
+
 extension simd_quatf {
     init(_ godotQuat: SwiftGodot.Quaternion) {
         self.init(ix: godotQuat.x, iy: godotQuat.y, iz: godotQuat.z, r: godotQuat.w)
