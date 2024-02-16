@@ -492,7 +492,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     DispatchQueue.main.async {
                         let bounds = modelEntity.visualBounds(relativeTo: modelEntity.parent)
                         let collisionShape: RealityKit.ShapeResource = .generateBox(size: bounds.extents)
-                        
                         var collision = CollisionComponent(shapes: [collisionShape])
                         collision.filter = .init(group: [], mask: []) // disable for collision detection
                         
