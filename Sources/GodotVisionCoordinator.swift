@@ -82,7 +82,17 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var volumeCameraPosition: simd_float3 = .zero
     private var volumeCameraBoxSize: simd_float3 = .one
     private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
-    ///
+    private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
+    
+    public func changeScaleIfVolumeSizeChanged(_ volumeSize: simd_double3) {
+        if volumeSize != realityKitVolumeSize {
+            realityKitVolumeSize = volumeSize
+            var ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
+            godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
+            self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
+        }
+    }
+    
     public func reloadScene() {
         print("reloadScene currently doesn't work for loading a new version of the scene saved from the editor, since Xcode copies the Godot_Project into the application's bundle only once at build time.")
         resetRealityKit()
@@ -228,14 +238,13 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         volumeCameraBoxSize = godotVolumeBoxSize
         
         let ratio = simd_float3(realityKitVolumeSize) / godotVolumeBoxSize
-        // print("VOLUME RATIO", ratio)
         
         // Check that the boxes (realtikit and godot) have the same "shape"
         if !(ratio.x.isApproximatelyEqualTo(ratio.y) && ratio.y.isApproximatelyEqualTo(ratio.z)) {
             print("ERROR: expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
         }
-        
-        self.godotEntitiesParent.scale = .one * max(max(ratio.x, ratio.y), ratio.z)
+        godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
+        self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
     }
     
     func resetRealityKit() {
@@ -319,7 +328,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if let volumeCamera {
             // should do rotation too, but idk how to go from godot rotation to RK 'orientation'
             // ie: physicsEntitiesParent.orientation = some_function(volumeCamera.rotation)
-            volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -0.1
+            // use scale here too
+            volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -1 * godotToRealityKitRatio
         }
     }
     
