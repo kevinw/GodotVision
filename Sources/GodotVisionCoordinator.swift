@@ -413,10 +413,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         return audioResource
     }
     
+    var showedGodotQuitMessage = false
+    
     func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         if stepGodotFrame() {
-            print("GODOT HAS QUIT")
-            // TODO: ask visionOS application to quit? or...?
+            if !showedGodotQuitMessage {
+                print("GODOT HAS QUIT.")
+                showedGodotQuitMessage = true
+            }
+            return
         }
         
         defer { 
