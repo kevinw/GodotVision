@@ -114,6 +114,7 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
                 
                 rkMat.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: Float(stdMat.metallic))
                 rkMat.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: Float(stdMat.roughness))
+                rkMat.textureCoordinateTransform = .init(offset: SIMD2<Float>(x: stdMat.uv1Offset.x, y: stdMat.uv1Offset.y), scale: SIMD2<Float>(x: stdMat.uv1Scale.x, y: stdMat.uv1Scale.y))
                 
                 //
                 // EMISSION
@@ -188,6 +189,7 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
         var meshDescriptor = MeshDescriptor(name: "vertices for godot mesh " + mesh.resourceName)
         meshDescriptor.positions = MeshBuffer(vertices.map { simd_float3($0) })
         meshDescriptor.primitives = .triangles(reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) }))
+        
         
         let uvsVariant = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue]
         
