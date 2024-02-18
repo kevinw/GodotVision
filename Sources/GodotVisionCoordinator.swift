@@ -36,11 +36,12 @@ struct DrawEntry {
     var rotation: simd_quatf = .init()
     var scale: simd_float3 = .one
     var inputRayPickable: ShapeSubType? = nil
+    var hoverEffect: Bool = false
     var visible: Bool = true
     
     // properties to split off into an "instantiation packet"
     var shape: ShapeSubType = .None
-    var material: MaterialEntry? = nil
+    var materials: [MaterialEntry] = []
 }
 
 struct InterThread {
@@ -81,7 +82,17 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var volumeCameraPosition: simd_float3 = .zero
     private var volumeCameraBoxSize: simd_float3 = .one
     private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
-    ///
+    private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
+    
+    public func changeScaleIfVolumeSizeChanged(_ volumeSize: simd_double3) {
+        if volumeSize != realityKitVolumeSize {
+            realityKitVolumeSize = volumeSize
+            var ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
+            godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
+            self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
+        }
+    }
+    
     public func reloadScene() {
         print("reloadScene currently doesn't work for loading a new version of the scene saved from the editor, since Xcode copies the Godot_Project into the application's bundle only once at build time.")
         resetRealityKit()
@@ -227,14 +238,13 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         volumeCameraBoxSize = godotVolumeBoxSize
         
         let ratio = simd_float3(realityKitVolumeSize) / godotVolumeBoxSize
-        // print("VOLUME RATIO", ratio)
         
         // Check that the boxes (realtikit and godot) have the same "shape"
         if !(ratio.x.isApproximatelyEqualTo(ratio.y) && ratio.y.isApproximatelyEqualTo(ratio.z)) {
             print("ERROR: expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
         }
-        
-        self.godotEntitiesParent.scale = .one * max(max(ratio.x, ratio.y), ratio.z)
+        godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
+        self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
     }
     
     func resetRealityKit() {
@@ -291,26 +301,22 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                                   rotation: .init(node.basis.getRotationQuaternion()),
                                   scale: .init(node.scale),
                                   inputRayPickable: inputRayPickable,
+                                  hoverEffect: .init(node.getMeta(name: "hover_effect", default: Variant(false))) ?? false,
                                   visible: node.visible
             )
-            
-            // TODO: maybe just always use the exact triangles from Godot? Not sure we even need to use box/sphere/capsule/etc from RealityKit... at the very least, try to match the number of segments in the generated mesh, etc. Right now we just RK defaults for Sphere/Capsule/etc
             
             entry.shape = .None
             
             if let meshInstance3D = node as? MeshInstance3D {
-                var material: SwiftGodot.Material? = nil
                 if let mesh = meshInstance3D.mesh {
                     entry.shape = .Mesh(resourceCache.meshEntry(forGodotMesh: mesh))
-                    
-                    //if mesh.getSurfaceCount() > 1 {
-                        // print("WARNING: mesh has more than one surface")
-                    //}
-                    material = meshInstance3D.getActiveMaterial(surface: 0)
-                }
-                
-                if let material {
-                    entry.material = resourceCache.materialEntry(forGodotMaterial: material)
+                    for i in 0...mesh.getSurfaceCount() - 1 {
+                        var material: SwiftGodot.Material? = nil
+                        material = meshInstance3D.getActiveMaterial(surface: i)
+                        if let material {
+                            entry.materials.append(resourceCache.materialEntry(forGodotMaterial: material))
+                        }
+                    }
                 }
             }
             
@@ -322,7 +328,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if let volumeCamera {
             // should do rotation too, but idk how to go from godot rotation to RK 'orientation'
             // ie: physicsEntitiesParent.orientation = some_function(volumeCamera.rotation)
-            volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -0.1
+            // use scale here too
+            volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -1 * godotToRealityKitRatio
         }
     }
     
@@ -463,27 +470,20 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 entity = event.scene.findEntity(id: entityID)
             } else {
                 var materials: [RealityKit.Material]? = nil
-                if let materialEntry = drawEntry.material {
-                    materials = [materialEntry.getMaterial(resourceCache: resourceCache)]
+                if !drawEntry.materials.isEmpty {
+                    materials = drawEntry.materials.map { entry in
+                        return entry.getMaterial(resourceCache: resourceCache)
+                    }
                 }
                 
                 var modelEntity: ModelEntity
                 
                 switch drawEntry.shape {
-                case .Sphere(let radius):
-                    let meshResource = MeshResource.generateSphere(radius: radius)
-                    modelEntity = ModelEntity(mesh: meshResource, materials: materials ?? [whiteNonMetallic])
-                case .Box(let size):
-                    let meshResource = MeshResource.generateBox(size: size)
-                    modelEntity = ModelEntity(mesh: meshResource, materials: materials ?? [whiteNonMetallic])
-                case .Capsule(let height, let radius):
-                    let size = simd_float3(radius * 2, height, radius * 2)
-                    let meshResource = MeshResource.generateBox(size: size, cornerRadius: radius)
-                    modelEntity = ModelEntity(mesh: meshResource, materials: materials ?? [whiteNonMetallic])
                 case .Mesh(let meshEntry):
                     modelEntity = ModelEntity(mesh: meshEntry.meshResource, materials: materials ?? [whiteNonMetallic])
-                    // let bounds = modelEntity.visualBounds(relativeTo: nil)
                 case .None:
+                    modelEntity = ModelEntity()
+                default:
                     modelEntity = ModelEntity()
                 }
                 
@@ -507,14 +507,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     DispatchQueue.main.async {
                         let bounds = modelEntity.visualBounds(relativeTo: modelEntity.parent)
                         let collisionShape: RealityKit.ShapeResource = .generateBox(size: bounds.extents)
-                        
                         var collision = CollisionComponent(shapes: [collisionShape])
                         collision.filter = .init(group: [], mask: []) // disable for collision detection
                         
                         // TODO: this is a dummy collision shape from the visual bounds of the entity. we can do something smarter based on the actual godot shapes!
                         
                         modelEntity.components.set(InputTargetComponent())
-//                        modelEntity.components.set(HoverEffectComponent()) // TODO: we probably don't ALWAYS want the visual highlight for pickable things. how to configure this from Godot?
+                        if drawEntry.hoverEffect {
+                            modelEntity.components.set(HoverEffectComponent())
+                        }
                         modelEntity.components.set(collision)
                         
                     }
