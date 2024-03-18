@@ -87,7 +87,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     public func changeScaleIfVolumeSizeChanged(_ volumeSize: simd_double3) {
         if volumeSize != realityKitVolumeSize {
             realityKitVolumeSize = volumeSize
-            var ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
+            let ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
             godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
             self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
         }

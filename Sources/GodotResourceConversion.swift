@@ -53,7 +53,7 @@ class ResourceEntry<G, R> where G: SwiftGodot.Resource {
     fileprivate var _createdRealityKitResource: R? = nil
     fileprivate var changedToken: SwiftGodot.Object? = nil
     
-    func onChanged() {
+    private func onChanged() {
         // TODO: haven't actually verified this works...
         
         print("\(Self.self) CHANGED", String(describing: godotResource))
@@ -164,6 +164,28 @@ class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
     }
 }
 
+private func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> RealityKit.MeshResource.Skeleton {
+    let meshName = String(skeleton.name)
+    var jointNames: [String] = []
+    var inverseBindPoseMatrices: [simd_float4x4] = []
+    var restPoseTransforms: [RealityKit.Transform] = []
+    var parentIndices: [Int] = []
+
+    for boneIdx in 0..<skeleton.getBoneCount() {
+        jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
+        parentIndices.append(Int(skeleton.getBoneParent(boneIdx: boneIdx)))
+        inverseBindPoseMatrices.append(simd_float4x4(skeleton.getBonePose(boneIdx: boneIdx))) // TODO XXX does this need to be inverse?
+        restPoseTransforms.append(RealityKit.Transform(skeleton.getBoneRest(boneIdx: boneIdx)))
+    }
+    
+    return MeshResource.Skeleton(id: meshName,
+                                 jointNames: jointNames,
+                                 inverseBindPoseMatrices: inverseBindPoseMatrices,
+                                 restPoseTransforms: nil,
+                                 parentIndices: nil
+    )!
+}
+
 private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescriptor]? {
     if mesh.getSurfaceCount() == 0 {
         fatalError("TODO: how to handle a Godot mesh with zero surfaces?")
@@ -172,6 +194,8 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
     enum ArrayType: Int { // TODO: are these already exposed from SwiftGodot somewhere?
         case ARRAY_VERTEX = 0
         case ARRAY_TEX_UV = 4
+        case ARRAY_BONES = 10 /// PackedFloat32Array or PackedInt32Array of bone indices. Contains either 4 or 8 numbers per vertex depending on the presence of the ARRAY_FLAG_USE_8_BONE_WEIGHTS flag.
+        case ARRAY_WEIGHTS = 11 /// PackedFloat32Array or PackedFloat64Array of bone weights in the range 0.0 to 1.0 (inclusive). Contains either 4 or 8 numbers per vertex depending on the presence of the ARRAY_FLAG_USE_8_BONE_WEIGHTS flag.
         case ARRAY_INDEX = 12
     }
     
@@ -184,14 +208,54 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
         guard let vertices = surfaceArrays[ArrayType.ARRAY_VERTEX.rawValue].cast(as: PackedVector3Array.self, debugName: "mesh vertices") else { continue }
         guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
         
+        let bonesVariant = surfaceArrays[ArrayType.ARRAY_BONES.rawValue]
+        switch bonesVariant.gtype {
+        case .nil:
+            ()
+        case .packedInt32Array:
+            if let bones = bonesVariant.cast(as: PackedInt32Array.self) {
+                /*
+                print("BONES Int32", bones)
+                for (idx, boneIndex) in bones.enumerated() {
+                    print(idx, "bone", boneIndex)
+                }
+                */
+            } else {
+                print("ERROR: could not cast ARRAY_BONES as PackedInt32Array")
+            }
+        case .packedFloat32Array:
+            if let bones = bonesVariant.cast(as: PackedFloat32Array.self) {
+                print("BONES Float32", bones)
+            } else {
+                print("ERROR: could not cast ARRAY_BONES as PackedFloat32Array")
+            }
+        default:
+            print("ERROR: ARRAY_BONES array was an unexpected gtype:", bonesVariant.gtype)
+        }
+        
+        let weightsVariant = surfaceArrays[ArrayType.ARRAY_WEIGHTS.rawValue]
+        switch bonesVariant.gtype {
+        case .nil:
+            ()
+        case .packedFloat32Array:
+            ()
+        case .packedFloat64Array:
+            ()
+        default:
+            print("ERROR: ARRAY_WEIGHTS array was an unexpected gtype:", weightsVariant.gtype)
+        }
+        
+        //
+        // https://developer.apple.com/documentation/realitykit/meshjointinfluence
+        //
+        
         var meshDescriptor = MeshDescriptor(name: "vertices for godot mesh " + mesh.resourceName)
         meshDescriptor.materials = .allFaces(UInt32(surfIdx))
         meshDescriptor.positions = MeshBuffer(vertices.map { simd_float3($0) })
         meshDescriptor.primitives = .triangles(reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) }))
         if let uvs = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue].cast(as: PackedVector2Array.self, debugName: "uvs") {
             meshDescriptor.textureCoordinates = .init(uvs.map { point in
-                var translated_point = simd_float2(x: point.x, y: 1 - point.y)
-                return translated_point
+                simd_float2(x: point.x, y: 1 - point.y)
             })
         }
         
