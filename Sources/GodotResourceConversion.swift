@@ -112,7 +112,12 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
                 
                 rkMat.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: Float(stdMat.metallic))
                 rkMat.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: Float(stdMat.roughness))
-                rkMat.textureCoordinateTransform = .init(offset: SIMD2<Float>(x: stdMat.uv1Offset.x, y: stdMat.uv1Offset.y), scale: SIMD2<Float>(x: stdMat.uv1Scale.x, y: stdMat.uv1Scale.y))
+                
+                rkMat.textureCoordinateTransform = .init(offset: .init(x: stdMat.uv1Offset.x, y: stdMat.uv1Offset.y), scale: .init(x: stdMat.uv1Scale.x, y: stdMat.uv1Scale.y))
+                
+                if stdMat.uv1Offset != .zero || stdMat.uv1Scale != .one {
+                    print("!!!!!", stdMat.albedoTexture?.resourcePath, rkMat.textureCoordinateTransform)
+                }
                 
                 //
                 // EMISSION
@@ -145,13 +150,11 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
 /// Generates a RealityKit mesh from a Godot mesh.
 class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
     var meshResource: MeshResource {
-        if _createdRealityKitResource == nil, let godotResource {
-            if let descriptors = createRealityKitMeshFromGodot(mesh: godotResource) {
-                do {
-                    _createdRealityKitResource = try MeshResource.generate(from: descriptors)
-                } catch {
-                    print("ERROR", error)
-                }
+        if _createdRealityKitResource == nil, let godotResource, let descriptors = createRealityKitMeshFromGodot(mesh: godotResource) {
+            do {
+                _createdRealityKitResource = try MeshResource.generate(from: descriptors)
+            } catch {
+                print("ERROR", error)
             }
         }
         
@@ -170,28 +173,59 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
     }
     
     enum ArrayType: Int { // TODO: are these already exposed from SwiftGodot somewhere?
-        case ARRAY_VERTEX = 0
-        case ARRAY_TEX_UV = 4
-        case ARRAY_INDEX = 12
+        case ARRAY_VERTEX  = 0
+        case ARRAY_NORMAL  = 1
+        case ARRAY_TEX_UV  = 4
+        case ARRAY_TEX_UV2 = 5
+        case ARRAY_INDEX   = 12
     }
     
     var meshDescriptors: [MeshDescriptor] = []
     for surfIdx in 0..<mesh.getSurfaceCount() {
         let surfaceArrays = mesh.surfaceGetArrays(surfIdx: surfIdx)
         
-        MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
+        print("surf_idx \(surfIdx))")
+        
+        // MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
         
         guard let vertices = surfaceArrays[ArrayType.ARRAY_VERTEX.rawValue].cast(as: PackedVector3Array.self, debugName: "mesh vertices") else { continue }
         guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
         
+        print("  vertices.count \(vertices.count)")
+        
         var meshDescriptor = MeshDescriptor(name: "vertices for godot mesh " + mesh.resourceName)
         meshDescriptor.materials = .allFaces(UInt32(surfIdx))
         meshDescriptor.positions = MeshBuffer(vertices.map { simd_float3($0) })
-        meshDescriptor.primitives = .triangles(reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) }))
+        
+        let indexBuffer: [UInt32] = indices.map { UInt32($0) }
+        meshDescriptor.primitives = .triangles(reverseWindingOrder(ofIndexBuffer: indexBuffer))
+        
+        let normalsVariant = surfaceArrays[ArrayType.ARRAY_NORMAL.rawValue]
+        if normalsVariant != .init(), let normals = normalsVariant.cast(as: PackedVector3Array.self, debugName: "normals") {
+            meshDescriptor.normals = .init(normals.map { simd_float3($0) })
+        }
         
         let uvsVariant = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue]
         if uvsVariant != .init(), let uvs = uvsVariant.cast(as: PackedVector2Array.self, debugName: "uvs") {
-            meshDescriptor.textureCoordinates = .init(uvs.map { simd_float2(x: $0.x, y: 1 - $0.y) })
+            let uvsSimd = uvs.map { simd_float2(x: $0.x, y: 1 - $0.y) }
+            meshDescriptor.textureCoordinates = .init(uvsSimd)
+            print("  uvs.count \(uvsSimd.count)")
+            var minVal = simd_float2(.infinity, .infinity)
+            var maxVal = -simd_float2(.infinity, .infinity)
+            for uv in uvsSimd {
+                print("    \(uv)")
+                if uv.x < minVal.x { minVal.x = uv.x }
+                if uv.y < minVal.y { minVal.y = uv.y }
+                if uv.x > maxVal.x { maxVal.x = uv.x }
+                if uv.y > maxVal.y { maxVal.y = uv.y }
+            }
+            
+            print("MIN", minVal, "MAX", maxVal)
+        }
+        
+        let uv2Variant = surfaceArrays[ArrayType.ARRAY_TEX_UV2.rawValue]
+        if uv2Variant != .init() {
+            fatalError("unhandled uv2")
         }
         
         meshDescriptors.append(meshDescriptor)
