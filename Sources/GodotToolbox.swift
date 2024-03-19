@@ -105,3 +105,23 @@ func initHook(_ level: GDExtension.InitializationLevel) {
     }
 }
 
+//
+// error logging
+//
+
+func logError(_ message: String, functionName: String = #function) {
+    print("⚠️ \(functionName) ERROR: \(message)")
+}
+
+func logError(_ error: any Error, functionName: String = #function) {
+    print("⚠️ \(functionName) ERROR: \(error)")
+}
+
+func doLoggingErrors(_ block: () throws -> Void, functionName: String = #function) {
+    do {
+        try block()
+    } catch {
+        logError(error, functionName: functionName)
+    }
+    
+}

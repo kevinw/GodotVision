@@ -50,7 +50,7 @@ class ResourceCache {
 
 class ResourceEntry<G, R> where G: SwiftGodot.Resource {
     fileprivate var godotResource: G? = nil
-    fileprivate var _createdRealityKitResource: R? = nil
+    fileprivate var rkResource: R? = nil
     fileprivate var changedToken: SwiftGodot.Object? = nil
     
     private func onChanged() {
@@ -58,7 +58,7 @@ class ResourceEntry<G, R> where G: SwiftGodot.Resource {
         
         print("\(Self.self) CHANGED", String(describing: godotResource))
         DispatchQueue.main.async {
-            self._createdRealityKitResource = nil
+            self.rkResource = nil
         }
     }
     
@@ -89,7 +89,7 @@ class TextureEntry: ResourceEntry<SwiftGodot.Texture, RealityKit.TextureResource
 
 class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
     func getMaterial(resourceCache: ResourceCache) -> RealityKit.Material {
-        if _createdRealityKitResource == nil, let godotResource {
+        if rkResource == nil, let godotResource {
             if let stdMat = godotResource as? StandardMaterial3D {
                 var rkMat = PhysicallyBasedMaterial()
                 
@@ -129,43 +129,39 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
                     rkMat.emissiveIntensity = Float(stdMat.emissionIntensity / 1000.0) // TODO: Godot docs say Material.emission_intensity is specified in nits and defaults to 1000. not sure how to convert this, since the RealityKit docs don't specify a unit.
                 }
                 
-                _createdRealityKitResource = rkMat
+                rkResource = rkMat
             }
         }
         
-        if _createdRealityKitResource == nil {
-            print("ERROR: generating material from", String(describing: godotResource))
-            _createdRealityKitResource = SimpleMaterial(color: .systemPink, isMetallic: false)
+        if rkResource == nil {
+            logError("generating material from \(String(describing: godotResource))")
+            rkResource = SimpleMaterial(color: .systemPink, isMetallic: false)
         }
         
-        return _createdRealityKitResource!
+        return rkResource!
     }
 }
 
 /// Generates a RealityKit mesh from a Godot mesh.
 class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
     var meshResource: MeshResource {
-        if _createdRealityKitResource == nil, let godotResource {
-            if let descriptors = createRealityKitMeshFromGodot(mesh: godotResource) {
-                do {
-                    _createdRealityKitResource = try MeshResource.generate(from: descriptors)
-                } catch {
-                    print("ERROR", error)
-                }
+        if rkResource == nil, let godotResource {
+            doLoggingErrors {
+                rkResource = try rkMesh(fromGodotMesh: godotResource)
             }
         }
         
-        if _createdRealityKitResource == nil {
-            print("ERROR: generating sphere as error mesh")
-            _createdRealityKitResource = MeshResource.generateSphere(radius: 1.0)
+        if rkResource == nil {
+            // TODO: not sure replacing if with a sphere is actually what we want here.
+            logError("generating sphere as error mesh")
+            rkResource = MeshResource.generateSphere(radius: 1.0)
         }
         
-        return _createdRealityKitResource!
+        return rkResource!
     }
 }
 
 private func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> RealityKit.MeshResource.Skeleton {
-    let meshName = String(skeleton.name)
     var jointNames: [String] = []
     var inverseBindPoseMatrices: [simd_float4x4] = []
     var restPoseTransforms: [RealityKit.Transform] = []
@@ -173,20 +169,20 @@ private func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> Realit
 
     for boneIdx in 0..<skeleton.getBoneCount() {
         jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
-        parentIndices.append(Int(skeleton.getBoneParent(boneIdx: boneIdx)))
         inverseBindPoseMatrices.append(simd_float4x4(skeleton.getBonePose(boneIdx: boneIdx))) // TODO XXX does this need to be inverse?
         restPoseTransforms.append(RealityKit.Transform(skeleton.getBoneRest(boneIdx: boneIdx)))
+        parentIndices.append(Int(skeleton.getBoneParent(boneIdx: boneIdx)))
     }
     
-    return MeshResource.Skeleton(id: meshName,
+    return MeshResource.Skeleton(id: String(skeleton.name),
                                  jointNames: jointNames,
                                  inverseBindPoseMatrices: inverseBindPoseMatrices,
-                                 restPoseTransforms: nil,
-                                 parentIndices: nil
+                                 restPoseTransforms: restPoseTransforms,
+                                 parentIndices: parentIndices
     )!
 }
 
-private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescriptor]? {
+private func rkMesh(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshResource {
     if mesh.getSurfaceCount() == 0 {
         fatalError("TODO: how to handle a Godot mesh with zero surfaces?")
     }
@@ -199,7 +195,7 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
         case ARRAY_INDEX = 12
     }
     
-    var meshDescriptors: [MeshDescriptor] = []
+    var meshDescriptors: [(descriptor: MeshDescriptor, jointInfluences: [MeshJointInfluence])] = []
     for surfIdx in 0..<mesh.getSurfaceCount() {
         let surfaceArrays = mesh.surfaceGetArrays(surfIdx: surfIdx)
         
@@ -208,46 +204,55 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
         guard let vertices = surfaceArrays[ArrayType.ARRAY_VERTEX.rawValue].cast(as: PackedVector3Array.self, debugName: "mesh vertices") else { continue }
         guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
         
-        let bonesVariant = surfaceArrays[ArrayType.ARRAY_BONES.rawValue]
-        switch bonesVariant.gtype {
-        case .nil:
-            ()
-        case .packedInt32Array:
-            if let bones = bonesVariant.cast(as: PackedInt32Array.self) {
-                /*
-                print("BONES Int32", bones)
-                for (idx, boneIndex) in bones.enumerated() {
-                    print(idx, "bone", boneIndex)
+        var jointInfluences: [MeshJointInfluence] = []
+        
+        // ARRAY_BONES
+        do {
+            let bonesVariant = surfaceArrays[ArrayType.ARRAY_BONES.rawValue]
+            switch bonesVariant.gtype {
+            case .nil:
+                ()
+            case .packedInt32Array:
+                if let bones = bonesVariant.cast(as: PackedInt32Array.self, debugName: "ARRAY_BONES") {
+                    jointInfluences = bones.map { boneIndex in MeshJointInfluence(jointIndex: Int(boneIndex), weight: 0) }
                 }
-                */
-            } else {
-                print("ERROR: could not cast ARRAY_BONES as PackedInt32Array")
+            case .packedFloat32Array:
+                if let bones = bonesVariant.cast(as: PackedFloat32Array.self, debugName: "ARRAY_BONES") {
+                    jointInfluences = bones.map { MeshJointInfluence(jointIndex: Int($0), weight: 0) }
+                }
+            default:
+                logError("ARRAY_BONES array had unexpected gtype: \(bonesVariant.gtype)")
             }
-        case .packedFloat32Array:
-            if let bones = bonesVariant.cast(as: PackedFloat32Array.self) {
-                print("BONES Float32", bones)
-            } else {
-                print("ERROR: could not cast ARRAY_BONES as PackedFloat32Array")
-            }
-        default:
-            print("ERROR: ARRAY_BONES array was an unexpected gtype:", bonesVariant.gtype)
         }
         
-        let weightsVariant = surfaceArrays[ArrayType.ARRAY_WEIGHTS.rawValue]
-        switch bonesVariant.gtype {
-        case .nil:
-            ()
-        case .packedFloat32Array:
-            ()
-        case .packedFloat64Array:
-            ()
-        default:
-            print("ERROR: ARRAY_WEIGHTS array was an unexpected gtype:", weightsVariant.gtype)
+        // ARRAY_WEIGHTS
+        do {
+            let weightsVariant = surfaceArrays[ArrayType.ARRAY_WEIGHTS.rawValue]
+            switch weightsVariant.gtype {
+            case .nil:
+                if jointInfluences.count > 0 {
+                    logError("nil ARRAY_WEIGHTS but ARRAY_BONES present")
+                }
+            case .packedFloat32Array:
+                if let weights = weightsVariant.cast(as: PackedFloat32Array.self, debugName: "ARRAY_WEIGHTS") {
+                    if jointInfluences.count <= weights.count {
+                        weights.enumerated().forEach { (idx, weight) in jointInfluences[idx].weight = weight }
+                    } else {
+                        logError("more weights than bone indices")
+                    }
+                }
+            case .packedFloat64Array:
+                if let weights = weightsVariant.cast(as: PackedFloat64Array.self, debugName: "ARRAY_WEIGHTS") {
+                    if jointInfluences.count <= weights.count {
+                        weights.enumerated().forEach { (idx, weight) in jointInfluences[idx].weight = Float(weight) } // note: precision loss from 64 to 32 bit
+                    } else {
+                        logError("more weights than bone indices")
+                    }
+                }
+            default:
+                logError("ARRAY_WEIGHTS array had unexpected gtype: \(weightsVariant.gtype)")
+            }
         }
-        
-        //
-        // https://developer.apple.com/documentation/realitykit/meshjointinfluence
-        //
         
         var meshDescriptor = MeshDescriptor(name: "vertices for godot mesh " + mesh.resourceName)
         meshDescriptor.materials = .allFaces(UInt32(surfIdx))
@@ -259,10 +264,21 @@ private func createRealityKitMeshFromGodot(mesh: SwiftGodot.Mesh) -> [MeshDescri
             })
         }
         
-        meshDescriptors.append(meshDescriptor)
+
+        meshDescriptors.append((descriptor: meshDescriptor, jointInfluences: jointInfluences))
     }
     
-    return meshDescriptors
+    let mesh = try MeshResource.generate(from: meshDescriptors.map { $0.descriptor })
+    
+    /*
+    mesh.contents.models.forEach { model in
+        model.parts
+    }
+     */
+    
+    
+    
+    return mesh
 }
 
 private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []

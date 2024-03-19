@@ -99,7 +99,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if let sceneFilePath = self.sceneTree?.currentScene?.sceneFilePath {
             self.changeSceneToFile(atResourcePath: sceneFilePath)
         } else {
-            print("ERROR: cannot reload, no .sceneFilePath")
+            logError("cannot reload, no .sceneFilePath")
         }
     }
 
@@ -116,7 +116,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         let result = sceneTree.changeSceneToFile(path: sceneResourcePath)
         if SwiftGodot.GodotError.ok != result {
-            print("ERROR:", result)
+            logError("changeSceneToFile result was not ok: \(result)")
         }
     }
     
@@ -198,7 +198,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private func startMirroringMeshForNode(_ node: SwiftGodot.Node3D) {
         if mirroredGodotNodes.firstIndex(of: node) != nil {
-            print("ERROR: already mirroring node \(node)")
+            logError("already mirroring node \(node)")
             return
         }
         
@@ -214,23 +214,23 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         volumeCamera = node
         
         guard let area3D = volumeCamera as? Area3D else {
-            print("ERROR: expected node '\(VISION_VOLUME_CAMERA_GODOT_NODE_NAME)' to be an Area3D, but it was a \(node.godotClassName)")
+            logError("expected node '\(VISION_VOLUME_CAMERA_GODOT_NODE_NAME)' to be an Area3D, but it was a \(node.godotClassName)")
             return
         }
         
         let collisionShape3Ds = area3D.findChildren(pattern: "*", type: "CollisionShape3D")
         if collisionShape3Ds.count != 1 {
-            print("ERROR: expected \(VISION_VOLUME_CAMERA_GODOT_NODE_NAME) to have exactly one child with CollisionShape3D, but got \(collisionShape3Ds.count)")
+            logError("expected \(VISION_VOLUME_CAMERA_GODOT_NODE_NAME) to have exactly one child with CollisionShape3D, but got \(collisionShape3Ds.count)")
             return
         }
         
         guard let collisionShape3D = collisionShape3Ds[0] as? CollisionShape3D else {
-            print("ERROR: Could not cast child as CollisionShape3D")
+            logError("Could not cast child as CollisionShape3D")
             return
         }
         
         guard let boxShape3D = collisionShape3D.shape as? BoxShape3D else {
-            print("ERROR: Could not cast shape as BoxShape3D in CollisionShape3D child of \(VISION_VOLUME_CAMERA_GODOT_NODE_NAME)")
+            logError("Could not cast shape as BoxShape3D in CollisionShape3D child of \(VISION_VOLUME_CAMERA_GODOT_NODE_NAME)")
             return
         }
         
@@ -241,7 +241,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         // Check that the boxes (realtikit and godot) have the same "shape"
         if !(ratio.x.isApproximatelyEqualTo(ratio.y) && ratio.y.isApproximatelyEqualTo(ratio.z)) {
-            print("ERROR: expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
+            logError("expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
         }
         godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
         self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
@@ -279,7 +279,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 let owner_ids = colObj3D.getShapeOwners()
                 for ownerId in owner_ids {
                     if ownerId < 0 {
-                        print("error: ownerId < 0")
+                        logError("ownerId < 0")
                         continue
                     }
                     let owner_id = UInt32(ownerId)
@@ -403,7 +403,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             do {
                 audioResource = try AudioFileResource.load(contentsOf: fileUrl(forGodotResourcePath: resourcePath))
             } catch {
-                print("ERROR:", error)
+                logError(error)
                 return nil
             }
             
@@ -472,6 +472,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 }
                 
                 var modelEntity: ModelEntity
+                let mesh = try! RealityKit.MeshResource.generate(from: [])
                 
                 switch drawEntry.shape {
                 case .Mesh(let meshEntry):
@@ -521,7 +522,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 let parentRKID = godotInstanceIDToEntityID[drawEntry.parentId]
                 if drawEntry.parentId > 0 && parentRKID == nil {
                     if retriedIndex[index] ?? false {
-                        print("ERROR: no parent in bodyIDToEntityMap for", drawEntry.parentId)
+                        logError("no parent in bodyIDToEntityMap for \(drawEntry.parentId)")
                     } else {
                         // Account for if drawEntries has children specified before parents (just put this entity back on the list to try later)
                         retriedIndex[index] = true
@@ -545,7 +546,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     func godotInstanceFromRealityKitEntityID(_ eID: Entity.ID) -> SwiftGodot.Object? {
         for (godotInstanceID, rkEntityID) in godotInstanceIDToEntityID where rkEntityID == eID {
             guard let godotInstance = GD.instanceFromId(instanceId: godotInstanceID) else {
-                print("ERROR: could not get Godot instance from id \(godotInstanceID)")
+                logError("could not get Godot instance from id \(godotInstanceID)")
                 continue
             }
             

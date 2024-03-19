@@ -77,9 +77,11 @@ extension simd_quatf {
 
 extension SwiftGodot.Variant {
     /// A utility method for initializing a specific type from a Variant. Prints an error message if the cast fails.
-    func cast<T>(as t: T.Type, debugName: String = "value", printError: Bool = true) -> T? where T: InitsFromVariant {
+    func cast<T>(as t: T.Type, debugName: String = "value", printError: Bool = true, functionName: String = #function) -> T? where T: InitsFromVariant {
         guard let result = T(self) else {
-            if printError { print("expected \(debugName) to be castable to a \(T.self)") }
+            if printError {
+                logError("expected \(debugName) to be castable to a \(T.self)", functionName: functionName)
+            }
             return nil
         }
         
@@ -109,6 +111,7 @@ protocol InitsFromVariant { init?(_ variant: Variant) }
 
 extension PackedInt32Array: InitsFromVariant {}
 extension PackedFloat32Array: InitsFromVariant {}
+extension PackedFloat64Array: InitsFromVariant {}
 extension PackedVector3Array: InitsFromVariant {}
 extension PackedVector2Array: InitsFromVariant {}
 
