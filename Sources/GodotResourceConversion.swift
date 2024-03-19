@@ -264,21 +264,46 @@ private func rkMesh(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshResource 
             })
         }
         
-
+        
         meshDescriptors.append((descriptor: meshDescriptor, jointInfluences: jointInfluences))
     }
     
     let mesh = try MeshResource.generate(from: meshDescriptors.map { $0.descriptor })
     
-    /*
-    mesh.contents.models.forEach { model in
-        model.parts
+    //
+    // apparently realitykit doesn't (yet) let you set joint influences on a MeshDescriptor,
+    // so we take a roundabout way of getting jointInfluences into the mesh by generating the mesh,
+    // then iterating over its parts, applying the influences, and regenerating the mesh again.
+    // not great.
+    //
+    
+    var index = 0
+    var newContents = mesh.contents
+    
+outerLoop:
+    for var model in mesh.contents.models {
+        var parts = model.parts
+        for var part in parts {
+            if index >= meshDescriptors.count {
+                logError("too many mesh parts")
+                break outerLoop
+            }
+            
+            let jointInfluences = meshDescriptors[index].jointInfluences
+            index += 1
+            part.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: 4)
+            parts.update(part)
+        }
+        
+        model.parts = parts
+        newContents.models.update(model)
     }
-     */
     
+    if index != meshDescriptors.count {
+        logError("unexpected MeshPart count: meshDescriptors.count was \(meshDescriptors.count), but had \(index) parts")
+    }
     
-    
-    return mesh
+    return try MeshResource.generate(from: newContents)
 }
 
 private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []
