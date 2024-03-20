@@ -10,7 +10,6 @@ import SwiftGodot
 import RealityKit
 import Foundation
 
-
 class ResourceCache {
     var meshes:    [SwiftGodot.Mesh: MeshEntry] = .init()
     var materials: [SwiftGodot.Material: MaterialEntry] = .init()
@@ -144,24 +143,26 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
 
 /// Generates a RealityKit mesh from a Godot mesh.
 class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
+    
     var meshResource: MeshResource {
         if rkResource == nil, let godotResource {
             doLoggingErrors {
-                rkResource = try rkMesh(fromGodotMesh: godotResource)
+                let meshContents = try meshContents(fromGodotMesh: godotResource)
+                rkResource = try MeshResource.generate(from: meshContents)
             }
         }
         
         if rkResource == nil {
-            // TODO: not sure replacing if with a sphere is actually what we want here.
             logError("generating sphere as error mesh")
-            rkResource = MeshResource.generateSphere(radius: 1.0)
+            rkResource = MeshResource.generateSphere(radius: 1.0) // TODO: not sure using a sphere if we fail generating the actual mesh is what we want here.
         }
         
         return rkResource!
     }
 }
 
-private func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> RealityKit.MeshResource.Skeleton {
+
+func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> RealityKit.MeshResource.Skeleton {
     var jointNames: [String] = []
     var inverseBindPoseMatrices: [simd_float4x4] = []
     var restPoseTransforms: [RealityKit.Transform] = []
@@ -182,7 +183,7 @@ private func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> Realit
     )!
 }
 
-private func rkMesh(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshResource {
+private func meshContents(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshResource.Contents {
     if mesh.getSurfaceCount() == 0 {
         fatalError("TODO: how to handle a Godot mesh with zero surfaces?")
     }
@@ -290,7 +291,7 @@ outerLoop:
             }
             
             let jointInfluences = meshDescriptors[index].jointInfluences
-            index += 1
+            index += 1 // TODO: do parts and mesh descriptors necesarrily match?
             part.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: 4)
             parts.update(part)
         }
@@ -303,7 +304,7 @@ outerLoop:
         logError("unexpected MeshPart count: meshDescriptors.count was \(meshDescriptors.count), but had \(index) parts")
     }
     
-    return try MeshResource.generate(from: newContents)
+    return newContents
 }
 
 private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []

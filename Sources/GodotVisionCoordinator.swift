@@ -24,7 +24,7 @@ enum ShapeSubType {
     case Box(size: simd_float3)
     case Sphere(radius: Float)
     case Capsule(height: Float, radius: Float)
-    case Mesh(MeshEntry)
+    case Mesh(MeshEntry, Skeleton3D?)
 }
 
 // TODO: Maybe remove this struct entirely? we used to run Godot on a background thread, and used this to communicate all the "rendering" data back to the main thread. but now that the two loops are intertwined it may not be necessary.
@@ -309,7 +309,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             
             if let meshInstance3D = node as? MeshInstance3D {
                 if let mesh = meshInstance3D.mesh {
-                    entry.shape = .Mesh(resourceCache.meshEntry(forGodotMesh: mesh))
+                    let skeleton3D = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D
+                    entry.shape = .Mesh(resourceCache.meshEntry(forGodotMesh: mesh), skeleton3D)
                     for i in 0...mesh.getSurfaceCount() - 1 {
                         var material: SwiftGodot.Material? = nil
                         material = meshInstance3D.getActiveMaterial(surface: i)
@@ -475,8 +476,17 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 let mesh = try! RealityKit.MeshResource.generate(from: [])
                 
                 switch drawEntry.shape {
-                case .Mesh(let meshEntry):
-                    modelEntity = ModelEntity(mesh: meshEntry.meshResource, materials: materials ?? [whiteNonMetallic])
+                case .Mesh(let meshEntry, let skeleton3D):
+                    var mesh = meshEntry.meshResource
+                    if let skeleton3D {
+                        var newContents = mesh.contents
+                        newContents.skeletons.update(createRealityKitSkeleton(skeleton: skeleton3D)) // TODO: should we memoize Skeleton3D -> MeshResource.Skeleton creation?
+                        doLoggingErrors {
+                            mesh = try MeshResource.generate(from: newContents)
+                        }
+                    }
+                    
+                    modelEntity = ModelEntity(mesh: mesh, materials: materials ?? [whiteNonMetallic])
                 case .None:
                     modelEntity = ModelEntity()
                 default:
