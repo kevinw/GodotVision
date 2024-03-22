@@ -39,7 +39,7 @@ func getGodotProjectURL() -> URL {
 
 func getProjectDir() -> String {
     // Godot is expecting a path without the file:// part for the packfile
-    return getGodotProjectURL().absoluteString.removingStringPrefix("file://")
+    getGodotProjectURL().absoluteString.removingStringPrefix("file://")
 }
 
 @Godot

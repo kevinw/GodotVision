@@ -161,6 +161,8 @@ class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
     }
 }
 
+fileprivate let TEMP_SKELETON_ID = "skeleton0"
+
 
 func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> RealityKit.MeshResource.Skeleton {
     var jointNames: [String] = []
@@ -269,7 +271,7 @@ private func meshContents(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshRes
         meshDescriptors.append((descriptor: meshDescriptor, jointInfluences: jointInfluences))
     }
     
-    let mesh = try MeshResource.generate(from: meshDescriptors.map { $0.descriptor })
+    let tempMesh = try MeshResource.generate(from: meshDescriptors.map { $0.descriptor })
     
     //
     // apparently realitykit doesn't (yet) let you set joint influences on a MeshDescriptor,
@@ -278,32 +280,50 @@ private func meshContents(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshRes
     // not great.
     //
     
-    var index = 0
-    var newContents = mesh.contents
+    var newContents = MeshResource.Contents()
+    newContents.skeletons = tempMesh.contents.skeletons
+    newContents.instances = tempMesh.contents.instances
     
-outerLoop:
-    for var model in mesh.contents.models {
-        var parts = model.parts
-        for var part in parts {
-            if index >= meshDescriptors.count {
-                logError("too many mesh parts")
-                break outerLoop
+    var index = 0
+    
+    var modelCollection = MeshModelCollection()
+    tempMesh.contents.models.forEach {
+        var newParts: [MeshResource.Part] = []
+        $0.parts.forEach {
+            let jointInfluences = MeshBuffers.JointInfluences(meshDescriptors[index].jointInfluences)
+            /*
+            for (idx, ji) in meshDescriptors[index].jointInfluences.enumerated() {
+                print(idx, ji.jointIndex, ji.weight)
+            }
+            */
+            index += 1
+
+            var newPart = MeshResource.Part(id: $0.id, materialIndex: $0.materialIndex)
+            newPart.skeletonID = $0.skeletonID
+            newPart.triangleIndices = $0.triangleIndices
+            newPart.bitangents = $0.bitangents
+            newPart.normals = $0.normals
+            newPart.positions = $0.positions
+            newPart.tangents = $0.tangents
+            newPart.textureCoordinates = $0.textureCoordinates
+            print("JI COUNT:", jointInfluences.count, "POS COUNT:", $0.positions.count)
+            
+            let influencesPerVertex: Int = jointInfluences.count / $0.positions.count
+            if !(influencesPerVertex == 4 || influencesPerVertex == 8) {
+                fatalError("should be 4 or 8")
             }
             
-            let jointInfluences = meshDescriptors[index].jointInfluences
-            index += 1 // TODO: do parts and mesh descriptors necesarrily match?
-            part.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: 4)
-            parts.update(part)
+            newPart.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: influencesPerVertex)
+            newPart.skeletonID = TEMP_SKELETON_ID
+            newParts.append(newPart)
         }
         
-        model.parts = parts
-        newContents.models.update(model)
+        let newModel = MeshResource.Model(id: $0.id, parts: newParts)
+        modelCollection.insert(newModel)
     }
+    newContents.models = modelCollection
     
-    if index != meshDescriptors.count {
-        logError("unexpected MeshPart count: meshDescriptors.count was \(meshDescriptors.count), but had \(index) parts")
-    }
-    
+
     return newContents
 }
 
