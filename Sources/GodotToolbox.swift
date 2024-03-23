@@ -117,11 +117,12 @@ func logError(_ error: any Error, functionName: String = #function) {
     print("⚠️ \(functionName) ERROR: \(error)")
 }
 
-func doLoggingErrors(_ block: () throws -> Void, functionName: String = #function) {
+func doLoggingErrors<R>(_ block: () throws -> R, functionName: String = #function) -> R? {
     do {
-        try block()
+        return try block()
     } catch {
         logError(error, functionName: functionName)
     }
     
+    return nil
 }

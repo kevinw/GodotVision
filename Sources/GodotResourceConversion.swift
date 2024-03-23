@@ -141,6 +141,32 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
     }
 }
 
+struct MeshKey: Hashable {
+    var godotMesh: SwiftGodot.Mesh
+    var godotSkeleton: SwiftGodot.Skeleton3D? = nil
+}
+
+private var meshCache: [MeshKey: MeshResource] = [:] // TODO @Leak
+
+private func _getMesh(godotMesh: SwiftGodot.Mesh, godotSkeleton: SwiftGodot.Skeleton3D? = nil) -> MeshResource? {
+    doLoggingErrors {
+        let meshContents = try meshContents(fromGodotMesh: godotMesh, skeleton: godotSkeleton)
+        return try MeshResource.generate(from: meshContents)
+    }
+}
+
+func getMesh(godotMesh: SwiftGodot.Mesh, godotSkeleton: SwiftGodot.Skeleton3D? = nil) -> MeshResource? {
+    let key = MeshKey(godotMesh: godotMesh, godotSkeleton: godotSkeleton)
+    if let meshResource = meshCache[key] {
+        return meshResource
+    }
+    
+    let meshResource = _getMesh(godotMesh: godotMesh, godotSkeleton: godotSkeleton)
+    meshCache[key] = meshResource
+    return meshResource
+}
+
+
 /// Generates a RealityKit mesh from a Godot mesh.
 class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
     
@@ -161,10 +187,7 @@ class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
     }
 }
 
-fileprivate let TEMP_SKELETON_ID = "skeleton0"
-
-
-func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> RealityKit.MeshResource.Skeleton {
+func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.Skeleton? {
     var jointNames: [String] = []
     var inverseBindPoseMatrices: [simd_float4x4] = []
     var restPoseTransforms: [RealityKit.Transform] = []
@@ -172,20 +195,21 @@ func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> RealityKit.Mes
 
     for boneIdx in 0..<skeleton.getBoneCount() {
         jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
-        inverseBindPoseMatrices.append(simd_float4x4(skeleton.getBonePose(boneIdx: boneIdx))) // TODO XXX does this need to be inverse?
+        inverseBindPoseMatrices.append(simd_inverse(simd_float4x4(skeleton.getBonePose(boneIdx: boneIdx)))) // TODO XXX does this need to be inverse?
         restPoseTransforms.append(RealityKit.Transform(skeleton.getBoneRest(boneIdx: boneIdx)))
         parentIndices.append(Int(skeleton.getBoneParent(boneIdx: boneIdx)))
     }
     
-    return MeshResource.Skeleton(id: String(skeleton.name),
+    let skeletonName = String(skeleton.name)
+    return MeshResource.Skeleton(id: skeletonName.count > 0 ? skeletonName : "skeleton",
                                  jointNames: jointNames,
                                  inverseBindPoseMatrices: inverseBindPoseMatrices,
                                  restPoseTransforms: restPoseTransforms,
                                  parentIndices: parentIndices
-    )!
+    )
 }
 
-private func meshContents(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshResource.Contents {
+private func meshContents(fromGodotMesh mesh: SwiftGodot.Mesh, skeleton: SwiftGodot.Skeleton3D? = nil) throws -> MeshResource.Contents {
     if mesh.getSurfaceCount() == 0 {
         fatalError("TODO: how to handle a Godot mesh with zero surfaces?")
     }
@@ -281,45 +305,43 @@ private func meshContents(fromGodotMesh mesh: SwiftGodot.Mesh) throws -> MeshRes
     //
     
     var newContents = MeshResource.Contents()
-    newContents.skeletons = tempMesh.contents.skeletons
     newContents.instances = tempMesh.contents.instances
     
-    var index = 0
     
+    var rkSkeleton: MeshResource.Skeleton? = nil
+    if let skeleton {
+        if let newSkeleton = createRealityKitSkeleton(skeleton: skeleton) {
+            rkSkeleton = newSkeleton
+            newContents.skeletons = MeshSkeletonCollection([newSkeleton])
+        }
+    }
+    
+    var index = 0
     var modelCollection = MeshModelCollection()
     tempMesh.contents.models.forEach {
-        var newParts: [MeshResource.Part] = []
-        $0.parts.forEach {
-            let jointInfluences = MeshBuffers.JointInfluences(meshDescriptors[index].jointInfluences)
-            /*
-            for (idx, ji) in meshDescriptors[index].jointInfluences.enumerated() {
-                print(idx, ji.jointIndex, ji.weight)
+        let newParts: [MeshResource.Part] = $0.parts.map {
+            var newPart = $0
+            if meshDescriptors[index].jointInfluences.count > 0 {
+                let jointInfluences = MeshBuffers.JointInfluences(meshDescriptors[index].jointInfluences)
+                let influencesPerVertex: Int = jointInfluences.count / $0.positions.count
+                if !(influencesPerVertex == 4 || influencesPerVertex == 8) {
+                    fatalError("should be 4 or 8")
+                }
+                
+                // NOTE: RealityKit will silently set 'skeletonID' to nil here if the MeshContents does not
+                // already have a matching skeleton in its .skeletons collection!
+                newPart.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: influencesPerVertex)
+                newPart.skeletonID = rkSkeleton?.id
+                if let skeletonID = newPart.skeletonID {
+                    if newContents.skeletons[skeletonID] == nil {
+                        logError("no skeleton for id '\(skeletonID)'")
+                    }
+                }
             }
-            */
             index += 1
-
-            var newPart = MeshResource.Part(id: $0.id, materialIndex: $0.materialIndex)
-            newPart.skeletonID = $0.skeletonID
-            newPart.triangleIndices = $0.triangleIndices
-            newPart.bitangents = $0.bitangents
-            newPart.normals = $0.normals
-            newPart.positions = $0.positions
-            newPart.tangents = $0.tangents
-            newPart.textureCoordinates = $0.textureCoordinates
-            print("JI COUNT:", jointInfluences.count, "POS COUNT:", $0.positions.count)
-            
-            let influencesPerVertex: Int = jointInfluences.count / $0.positions.count
-            if !(influencesPerVertex == 4 || influencesPerVertex == 8) {
-                fatalError("should be 4 or 8")
-            }
-            
-            newPart.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: influencesPerVertex)
-            newPart.skeletonID = TEMP_SKELETON_ID
-            newParts.append(newPart)
+            return newPart
         }
-        
-        let newModel = MeshResource.Model(id: $0.id, parts: newParts)
-        modelCollection.insert(newModel)
+        modelCollection.insert(MeshResource.Model(id: $0.id, parts: newParts))
     }
     newContents.models = modelCollection
     

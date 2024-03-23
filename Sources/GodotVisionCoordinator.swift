@@ -24,7 +24,7 @@ enum ShapeSubType {
     case Box(size: simd_float3)
     case Sphere(radius: Float)
     case Capsule(height: Float, radius: Float)
-    case Mesh(MeshEntry, Skeleton3D?)
+    case Mesh(SwiftGodot.Mesh, Skeleton3D?)
 }
 
 // TODO: Maybe remove this struct entirely? we used to run Godot on a background thread, and used this to communicate all the "rendering" data back to the main thread. but now that the two loops are intertwined it may not be necessary.
@@ -32,16 +32,12 @@ struct DrawEntry {
     var name: String? = nil
     var instanceId: Int64 = 0
     var parentId: Int64 = 0
-    var position: simd_float3 = .zero
-    var rotation: simd_quatf = .init()
-    var scale: simd_float3 = .one
     var inputRayPickable: ShapeSubType? = nil
     var hoverEffect: Bool = false
-    var visible: Bool = true
-    
     // properties to split off into an "instantiation packet"
     var shape: ShapeSubType = .None
     var materials: [MaterialEntry] = []
+    var node: SwiftGodot.Node3D
 }
 
 struct InterThread {
@@ -297,20 +293,16 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             var entry = DrawEntry(name: node.name.description, // TODO: only use name on debug builds??
                                   instanceId: Int64(node.getInstanceId()),
                                   parentId: Int64(node.getParent()?.getInstanceId() ?? 0),
-                                  position: .init(node.position),
-                                  rotation: .init(node.basis.getRotationQuaternion()),
-                                  scale: .init(node.scale),
                                   inputRayPickable: inputRayPickable,
                                   hoverEffect: .init(node.getMeta(name: "hover_effect", default: Variant(false))) ?? false,
-                                  visible: node.visible
-            )
+                                  node: node)
             
             entry.shape = .None
             
             if let meshInstance3D = node as? MeshInstance3D {
                 if let mesh = meshInstance3D.mesh {
                     let skeleton3D = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D
-                    entry.shape = .Mesh(resourceCache.meshEntry(forGodotMesh: mesh), skeleton3D)
+                    entry.shape = .Mesh(mesh, skeleton3D)
                     for i in 0...mesh.getSurfaceCount() - 1 {
                         var material: SwiftGodot.Material? = nil
                         material = meshInstance3D.getActiveMaterial(surface: i)
@@ -370,10 +362,16 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let godotEntitiesParent = Entity()
         godotEntitiesParent.name = "GODOTRK_ROOT"
         self.godotEntitiesParent = godotEntitiesParent
-        content.add(godotEntitiesParent)
+        
+        metaRoot.name = "META_ROOT"
+        metaRoot.addChild(godotEntitiesParent)
+        content.add(metaRoot)
+        
         return godotEntitiesParent
     }
     
+    var metaRoot: Entity = Entity()
+
     public func viewDidDisappear() {
         if let eventSubscription {
             eventSubscription.cancel()
@@ -398,7 +396,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
-    func cacheAudioResource(resourcePath: String) -> AudioFileResource? {
+    private func cacheAudioResource(resourcePath: String) -> AudioFileResource? {
         var audioResource: AudioFileResource? = _audioResources[resourcePath]
         if audioResource == nil {
             do {
@@ -468,29 +466,23 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 var materials: [RealityKit.Material]? = nil
                 if !drawEntry.materials.isEmpty {
                     materials = drawEntry.materials.map { entry in
-                        return entry.getMaterial(resourceCache: resourceCache)
+                        entry.getMaterial(resourceCache: resourceCache)
                     }
                 }
                 
-                var modelEntity: ModelEntity
-                let mesh = try! RealityKit.MeshResource.generate(from: [])
+                var modelEntity: Entity
                 
                 switch drawEntry.shape {
-                case .Mesh(let meshEntry, let skeleton3D):
-                    var mesh = meshEntry.meshResource
-                    if let skeleton3D {
-                        var newContents = mesh.contents
-                        newContents.skeletons.update(createRealityKitSkeleton(skeleton: skeleton3D)) // TODO: should we memoize Skeleton3D -> MeshResource.Skeleton creation?
-                        doLoggingErrors {
-                            mesh = try MeshResource.generate(from: newContents)
-                        }
+                case .Mesh(let mesh, let skeleton3D):
+                    if let mesh = getMesh(godotMesh: mesh, godotSkeleton: skeleton3D) {
+                        modelEntity = ModelEntity(mesh: mesh, materials: materials ?? [whiteNonMetallic])
+                    } else {
+                        modelEntity = Entity()
                     }
-                    
-                    modelEntity = ModelEntity(mesh: mesh, materials: materials ?? [whiteNonMetallic])
                 case .None:
-                    modelEntity = ModelEntity()
+                    modelEntity = Entity()
                 default:
-                    modelEntity = ModelEntity()
+                    modelEntity = Entity()
                 }
                 
                 modelEntity.name = "\(drawEntry.name ?? "Entity")(bodyID=\(drawEntry.instanceId))"
@@ -544,10 +536,27 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                         entity.setParent(parent)
                     }
                 }
-                entity.position = drawEntry.position
-                entity.orientation = drawEntry.rotation
-                entity.scale = drawEntry.scale
-                entity.isEnabled = drawEntry.visible // TODO: Godot visibility might still do _process..., but I'm pretty sure Entity.isEnabled with false will disable processing for the corresponding RealityKit Entity. This will probably be a problem.
+                entity.position = .init(drawEntry.node.position)
+                entity.orientation = .init(drawEntry.node.basis.getRotationQuaternion())
+                entity.scale = .init(drawEntry.node.scale)
+                entity.isEnabled = drawEntry.node.visible // TODO: Godot visibility might still do _process..., but I'm pretty sure Entity.isEnabled with false will disable processing for the corresponding RealityKit Entity. This will probably be a problem.
+                
+                // TODO: we might be able to register for an event when the bone poses change, and respond to that, instead of doing a per frame check. @Perf
+                if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
+                    if let meshInstance3D = drawEntry.node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
+                        var transforms: [Transform] = []
+                        var jointNames: [String] = []
+                        
+                        for boneIdx in 0..<skeleton.getBoneCount() {
+                            let pose = skeleton.getBonePose(boneIdx: boneIdx)
+                            let boneName = skeleton.getBoneName(boneIdx: boneIdx)
+                            transforms.append(Transform(pose))
+                            jointNames.append(boneName)
+                        }
+                        
+                        modelEntity.jointTransforms = transforms
+                    }
+                }
             }
         }
         
