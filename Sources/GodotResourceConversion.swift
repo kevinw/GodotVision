@@ -11,21 +11,12 @@ import RealityKit
 import Foundation
 
 class ResourceCache {
-    var meshes:    [SwiftGodot.Mesh: MeshEntry] = .init()
     var materials: [SwiftGodot.Material: MaterialEntry] = .init()
     var textures:  [SwiftGodot.Texture: TextureEntry] = .init()
     
     func reset() {
-        meshes.removeAll()
         materials.removeAll()
         textures.removeAll()
-    }
-    
-    func meshEntry(forGodotMesh godotMesh: SwiftGodot.Mesh) -> MeshEntry {
-        if meshes[godotMesh] == nil {
-            meshes[godotMesh] = MeshEntry(godotResource: godotMesh)
-        }
-        return meshes[godotMesh]!
     }
     
     func materialEntry(forGodotMaterial godotMaterial: SwiftGodot.Material) -> MaterialEntry {
@@ -148,43 +139,23 @@ struct MeshKey: Hashable {
 
 private var meshCache: [MeshKey: MeshResource] = [:] // TODO @Leak
 
-private func _getMesh(godotMesh: SwiftGodot.Mesh, godotSkeleton: SwiftGodot.Skeleton3D? = nil) -> MeshResource? {
-    doLoggingErrors {
-        let meshContents = try meshContents(fromGodotMesh: godotMesh, skeleton: godotSkeleton)
-        return try MeshResource.generate(from: meshContents)
-    }
-}
-
-func getMesh(godotMesh: SwiftGodot.Mesh, godotSkeleton: SwiftGodot.Skeleton3D? = nil) -> MeshResource? {
+func createRealityKitMesh(node: Node3D, godotMesh: SwiftGodot.Mesh, godotSkeleton: SwiftGodot.Skeleton3D? = nil) -> MeshResource? {
     let key = MeshKey(godotMesh: godotMesh, godotSkeleton: godotSkeleton)
     if let meshResource = meshCache[key] {
         return meshResource
     }
     
-    let meshResource = _getMesh(godotMesh: godotMesh, godotSkeleton: godotSkeleton)
-    meshCache[key] = meshResource
-    return meshResource
-}
-
-
-/// Generates a RealityKit mesh from a Godot mesh.
-class MeshEntry: ResourceEntry<SwiftGodot.Mesh, RealityKit.MeshResource> {
-    
-    var meshResource: MeshResource {
-        if rkResource == nil, let godotResource {
-            doLoggingErrors {
-                let meshContents = try meshContents(fromGodotMesh: godotResource)
-                rkResource = try MeshResource.generate(from: meshContents)
-            }
-        }
-        
-        if rkResource == nil {
-            logError("generating sphere as error mesh")
-            rkResource = MeshResource.generateSphere(radius: 1.0) // TODO: not sure using a sphere if we fail generating the actual mesh is what we want here.
-        }
-        
-        return rkResource!
+    var meshResource: MeshResource? = nil
+    doLoggingErrors {
+        let meshContents = try meshContents(node: node, fromGodotMesh: godotMesh, skeleton: godotSkeleton, verbose: true)
+        meshResource = try MeshResource.generate(from: meshContents)
     }
+
+    if let meshResource {
+        meshCache[key] = meshResource
+    }
+    
+    return meshResource
 }
 
 func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.Skeleton? {
@@ -209,7 +180,11 @@ func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.S
     )
 }
 
-private func meshContents(fromGodotMesh mesh: SwiftGodot.Mesh, skeleton: SwiftGodot.Skeleton3D? = nil) throws -> MeshResource.Contents {
+private func meshContents(node: Node3D,
+                          fromGodotMesh mesh: SwiftGodot.Mesh,
+                          skeleton: SwiftGodot.Skeleton3D? = nil,
+                          verbose: Bool = false) throws -> MeshResource.Contents
+{
     if mesh.getSurfaceCount() == 0 {
         fatalError("TODO: how to handle a Godot mesh with zero surfaces?")
     }
