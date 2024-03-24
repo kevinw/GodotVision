@@ -109,12 +109,20 @@ func initHook(_ level: GDExtension.InitializationLevel) {
 // error logging
 //
 
+private func stripFunctionName(_ functionName: String) -> String {
+    if let idx = functionName.firstIndex(of: Character("(")) {
+        return String(functionName.prefix(upTo: idx))
+    } else {
+        return functionName
+    }
+}
+
 func logError(_ message: String, functionName: String = #function) {
-    print("⚠️ \(functionName) ERROR: \(message)")
+    print("⚠️ \(stripFunctionName(functionName)) ERROR: \(message)")
 }
 
 func logError(_ error: any Error, functionName: String = #function) {
-    print("⚠️ \(functionName) ERROR: \(error)")
+    print("⚠️ \(stripFunctionName(functionName)) ERROR: \(error)")
 }
 
 func doLoggingErrors<R>(_ block: () throws -> R, functionName: String = #function) -> R? {
