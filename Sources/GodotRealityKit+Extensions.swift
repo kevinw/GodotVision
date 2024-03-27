@@ -28,10 +28,14 @@ extension RealityKit.Transform {
 
 extension simd_float4x4 {
     init(_ godotTransform: SwiftGodot.Transform3D) {
-        let col0 = godotTransform.basis.x
-        let col1 = godotTransform.basis.y
-        let col2 = godotTransform.basis.z
+        
+        let basis = godotTransform.basis // * SwiftGodot.Basis(axis: SwiftGodot.Vector3(x: 0, y: 0, z: 1), angle: .pi)
+        
+        let col0 = basis.x
+        let col1 = basis.y
+        let col2 = basis.z
         let col3 = godotTransform.origin
+        
         
         self.init(rows: [simd_float4(col0.x, col1.x, col2.x, col3.x),
                          simd_float4(col0.y, col1.y, col2.y, col3.y),

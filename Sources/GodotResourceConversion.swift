@@ -147,7 +147,7 @@ func createRealityKitMesh(node: Node3D, godotMesh: SwiftGodot.Mesh, godotSkeleto
     
     var meshResource: MeshResource? = nil
     doLoggingErrors {
-        let meshContents = try meshContents(node: node, fromGodotMesh: godotMesh, skeleton: godotSkeleton, verbose: true)
+        let meshContents = try meshContents(node: node, fromGodotMesh: godotMesh, skeleton: godotSkeleton, verbose: false)
         meshResource = try MeshResource.generate(from: meshContents)
     }
 
@@ -248,9 +248,7 @@ private func meshContents(node: Node3D,
             }
         }
         
-        if verbose {
-            print("surfIdx: \(surfIdx)")
-        }
+        if verbose { print("surfIdx: \(surfIdx)") }
         
         let surfaceArrays = mesh.surfaceGetArrays(surfIdx: surfIdx)
         MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
@@ -276,7 +274,7 @@ private func meshContents(node: Node3D,
         let normalsVariant = surfaceArrays[ArrayType.ARRAY_NORMAL.rawValue]
         if normalsVariant != .init(), let normals = normalsVariant.cast(as: PackedVector3Array.self, debugName: "normals") {
             let normalsArray = normals.map { simd_float3($0) }
-            print("  setting normals: \(normals.count)")
+            if verbose { print("  setting normals: \(normals.count)") }
             meshPart.normals = MeshBuffers.Normals(normalsArray)
         }
         
@@ -309,7 +307,7 @@ private func meshContents(node: Node3D,
         let uvsVariant = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue]
         if uvsVariant != .init(), let uvs = uvsVariant.cast(as: PackedVector2Array.self, debugName: "uvs") {
             let uvsArray = uvs.map { simd_float2(x: $0.x, y: 1 - $0.y) }
-            print("  setting texture coordinates: \(uvsArray.count)")
+            if verbose { print("  setting texture coordinates: \(uvsArray.count)") }
             meshPart.textureCoordinates = MeshBuffers.TextureCoordinates(uvsArray)
         }
         
@@ -371,16 +369,17 @@ private func meshContents(node: Node3D,
         }
         
         let influencesPerVertex = jointInfluences.count / verticesArray.count
-        if !(influencesPerVertex == 4 || influencesPerVertex == 8) {
-            logError("expected influencesPerVertex to be 4 or 8, but it was \(influencesPerVertex) - omitting jointInfluences")
-        } else {
-            meshPart.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: influencesPerVertex)
-            meshPart.skeletonID = rkSkeleton?.id
-            if let skeletonID = meshPart.skeletonID, newContents.skeletons[skeletonID] == nil {
-                logError("no skeleton passed for id '\(skeletonID)'")
+        if influencesPerVertex > 0 {
+            if !(influencesPerVertex == 4 || influencesPerVertex == 8) {
+                logError("expected influencesPerVertex to be 4 or 8, but it was \(influencesPerVertex) - omitting jointInfluences")
+            } else {
+                meshPart.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: influencesPerVertex)
+                meshPart.skeletonID = rkSkeleton?.id
+                if let skeletonID = meshPart.skeletonID, newContents.skeletons[skeletonID] == nil {
+                    logError("no skeleton passed for id '\(skeletonID)'")
+                }
             }
         }
-
     }
     
     var modelCollection = MeshModelCollection()
