@@ -157,6 +157,29 @@ func createRealityKitMesh(node: Node3D, godotMesh: SwiftGodot.Mesh, godotSkeleto
     
     return meshResource
 }
+    
+private func getInverseBindPoseMatrix(skeleton: Skeleton3D, boneIdx: Int32) -> simd_float4x4 {
+    var mat: simd_float4x4 = .init(diagonal: .one)
+    
+    if boneIdx == -1 {
+        return mat
+    }
+    
+    var boneIdx = boneIdx
+    while true {
+        mat *= simd_inverse(simd_float4x4(skeleton.getBonePose(boneIdx: boneIdx)))
+        
+        let parentIdx = skeleton.getBoneParent(boneIdx: boneIdx)
+        if parentIdx != -1 {
+            boneIdx = parentIdx
+        } else {
+            break
+        }
+    }
+    
+    return mat
+}
+
 
 func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.Skeleton? {
     var jointNames: [String] = []
@@ -166,7 +189,7 @@ func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.S
 
     for boneIdx in 0..<skeleton.getBoneCount() {
         jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
-        inverseBindPoseMatrices.append(simd_inverse(simd_float4x4(skeleton.getBonePose(boneIdx: boneIdx)))) // TODO XXX does this need to be inverse?
+        inverseBindPoseMatrices.append(getInverseBindPoseMatrix(skeleton: skeleton, boneIdx: boneIdx)) // TODO XXX does this need to be inverse?
         restPoseTransforms.append(RealityKit.Transform(skeleton.getBoneRest(boneIdx: boneIdx)))
         parentIndices.append(Int(skeleton.getBoneParent(boneIdx: boneIdx)))
     }
@@ -191,23 +214,110 @@ private func meshContents(node: Node3D,
     
     enum ArrayType: Int { // TODO: are these already exposed from SwiftGodot somewhere?
         case ARRAY_VERTEX = 0
+        case ARRAY_NORMAL = 1
+        case ARRAY_TANGENT = 2
         case ARRAY_TEX_UV = 4
         case ARRAY_BONES = 10 /// PackedFloat32Array or PackedInt32Array of bone indices. Contains either 4 or 8 numbers per vertex depending on the presence of the ARRAY_FLAG_USE_8_BONE_WEIGHTS flag.
         case ARRAY_WEIGHTS = 11 /// PackedFloat32Array or PackedFloat64Array of bone weights in the range 0.0 to 1.0 (inclusive). Contains either 4 or 8 numbers per vertex depending on the presence of the ARRAY_FLAG_USE_8_BONE_WEIGHTS flag.
         case ARRAY_INDEX = 12
     }
     
-    var meshDescriptors: [(descriptor: MeshDescriptor, jointInfluences: [MeshJointInfluence])] = []
+    if verbose {
+        print("--------\nmeshContents for node: \(node.name)")
+    }
+    
+    var newContents = MeshResource.Contents()
+    
+    var rkSkeleton: MeshResource.Skeleton? = nil
+    if let skeleton, let newSkeleton = createRealityKitSkeleton(skeleton: skeleton) {
+        rkSkeleton = newSkeleton
+        newContents.skeletons = MeshSkeletonCollection([newSkeleton])
+    }
+    
+
+    var meshParts: [MeshResource.Part] = []
     for surfIdx in 0..<mesh.getSurfaceCount() {
-        let surfaceArrays = mesh.surfaceGetArrays(surfIdx: surfIdx)
+        var meshPart = MeshResource.Part(id: "part\(surfIdx)", materialIndex: Int(surfIdx))
+        defer { meshParts.append(meshPart) }
         
+        if let arrayMesh = mesh as? ArrayMesh {
+            let primitiveType = arrayMesh.surfaceGetPrimitiveType(surfIdx: surfIdx)
+            if primitiveType != Mesh.PrimitiveType.triangles {
+                logError("cannot make mesh for surfIdx \(surfIdx)--primitive type is \(primitiveType)")
+                continue
+            }
+        }
+        
+        if verbose {
+            print("surfIdx: \(surfIdx)")
+        }
+        
+        let surfaceArrays = mesh.surfaceGetArrays(surfIdx: surfIdx)
         MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
         
+        
+        //
+        // positions
+        //
         guard let vertices = surfaceArrays[ArrayType.ARRAY_VERTEX.rawValue].cast(as: PackedVector3Array.self, debugName: "mesh vertices") else { continue }
+        let verticesArray = vertices.map { simd_float3($0) }
+        meshPart.positions = MeshBuffers.Positions(verticesArray)
+        
+        //
+        // triangleIndices
+        //
         guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
+        let indicesArray = reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) })
+        meshPart.triangleIndices = MeshBuffers.TriangleIndices(indicesArray)
         
+        //
+        // normals
+        //
+        let normalsVariant = surfaceArrays[ArrayType.ARRAY_NORMAL.rawValue]
+        if normalsVariant != .init(), let normals = normalsVariant.cast(as: PackedVector3Array.self, debugName: "normals") {
+            let normalsArray = normals.map { simd_float3($0) }
+            print("  setting normals: \(normals.count)")
+            meshPart.normals = MeshBuffers.Normals(normalsArray)
+        }
+        
+        //
+        // tangents
+        //
+        let tangentsVariant = surfaceArrays[ArrayType.ARRAY_TANGENT.rawValue]
+        if tangentsVariant != .init(), let tangents = tangentsVariant.cast(as: PackedFloat32Array.self, debugName: "tangents") {
+            var i = 0
+            var tangentsArray: [simd_float3] = []
+            while i < tangents.count {
+                let x: Float = tangents[i + 0]
+                let y: Float = tangents[i + 1]
+                let z: Float = tangents[i + 2]
+                tangentsArray.append(simd_float3(x, y, z))
+                // tangents[i + 3] is the binormal direction
+                i += 4
+            }
+            meshPart.tangents = MeshBuffers.Tangents(tangentsArray)
+        }
+        
+        if verbose {
+            print("  primitives count: \(indicesArray.count)")
+            print("  positions.count:", verticesArray.count)
+        }
+        
+        //
+        // uvs
+        //
+        let uvsVariant = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue]
+        if uvsVariant != .init(), let uvs = uvsVariant.cast(as: PackedVector2Array.self, debugName: "uvs") {
+            let uvsArray = uvs.map { simd_float2(x: $0.x, y: 1 - $0.y) }
+            print("  setting texture coordinates: \(uvsArray.count)")
+            meshPart.textureCoordinates = MeshBuffers.TextureCoordinates(uvsArray)
+        }
+        
+        //
+        // jointInfluences
+        //
         var jointInfluences: [MeshJointInfluence] = []
-        
+
         // ARRAY_BONES
         do {
             let bonesVariant = surfaceArrays[ArrayType.ARRAY_BONES.rawValue]
@@ -225,6 +335,10 @@ private func meshContents(node: Node3D,
             default:
                 logError("ARRAY_BONES array had unexpected gtype: \(bonesVariant.gtype)")
             }
+        }
+        
+        if verbose && jointInfluences.count > 0 {
+            print("  jointInfluences.count: \(jointInfluences.count)")
         }
         
         // ARRAY_WEIGHTS
@@ -256,71 +370,23 @@ private func meshContents(node: Node3D,
             }
         }
         
-        var meshDescriptor = MeshDescriptor(name: "vertices for godot mesh " + mesh.resourceName)
-        meshDescriptor.materials = .allFaces(UInt32(surfIdx))
-        meshDescriptor.positions = MeshBuffer(vertices.map { simd_float3($0) })
-        meshDescriptor.primitives = .triangles(reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) }))
-        if let uvs = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue].cast(as: PackedVector2Array.self, debugName: "uvs") {
-            meshDescriptor.textureCoordinates = .init(uvs.map { point in
-                simd_float2(x: point.x, y: 1 - point.y)
-            })
-        }
-        
-        
-        meshDescriptors.append((descriptor: meshDescriptor, jointInfluences: jointInfluences))
-    }
-    
-    let tempMesh = try MeshResource.generate(from: meshDescriptors.map { $0.descriptor })
-    
-    //
-    // apparently realitykit doesn't (yet) let you set joint influences on a MeshDescriptor,
-    // so we take a roundabout way of getting jointInfluences into the mesh by generating the mesh,
-    // then iterating over its parts, applying the influences, and regenerating the mesh again.
-    // not great.
-    //
-    
-    var newContents = MeshResource.Contents()
-    newContents.instances = tempMesh.contents.instances
-    
-    
-    var rkSkeleton: MeshResource.Skeleton? = nil
-    if let skeleton {
-        if let newSkeleton = createRealityKitSkeleton(skeleton: skeleton) {
-            rkSkeleton = newSkeleton
-            newContents.skeletons = MeshSkeletonCollection([newSkeleton])
-        }
-    }
-    
-    var index = 0
-    var modelCollection = MeshModelCollection()
-    tempMesh.contents.models.forEach {
-        let newParts: [MeshResource.Part] = $0.parts.map {
-            var newPart = $0
-            if meshDescriptors[index].jointInfluences.count > 0 {
-                let jointInfluences = MeshBuffers.JointInfluences(meshDescriptors[index].jointInfluences)
-                let influencesPerVertex: Int = jointInfluences.count / $0.positions.count
-                if !(influencesPerVertex == 4 || influencesPerVertex == 8) {
-                    fatalError("should be 4 or 8")
-                }
-                
-                // NOTE: RealityKit will silently set 'skeletonID' to nil here if the MeshContents does not
-                // already have a matching skeleton in its .skeletons collection!
-                newPart.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: influencesPerVertex)
-                newPart.skeletonID = rkSkeleton?.id
-                if let skeletonID = newPart.skeletonID {
-                    if newContents.skeletons[skeletonID] == nil {
-                        logError("no skeleton for id '\(skeletonID)'")
-                    }
-                }
+        let influencesPerVertex = jointInfluences.count / verticesArray.count
+        if !(influencesPerVertex == 4 || influencesPerVertex == 8) {
+            logError("expected influencesPerVertex to be 4 or 8, but it was \(influencesPerVertex) - omitting jointInfluences")
+        } else {
+            meshPart.jointInfluences = .init(influences: MeshBuffers.JointInfluences(jointInfluences), influencesPerVertex: influencesPerVertex)
+            meshPart.skeletonID = rkSkeleton?.id
+            if let skeletonID = meshPart.skeletonID, newContents.skeletons[skeletonID] == nil {
+                logError("no skeleton passed for id '\(skeletonID)'")
             }
-            index += 1
-            return newPart
         }
-        modelCollection.insert(MeshResource.Model(id: $0.id, parts: newParts))
+
     }
+    
+    var modelCollection = MeshModelCollection()
+    modelCollection.insert(MeshResource.Model(id: "model_\(node.name)", parts: meshParts))
     newContents.models = modelCollection
     
-
     return newContents
 }
 
