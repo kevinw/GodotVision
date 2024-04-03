@@ -7,6 +7,7 @@ Mirror Node3Ds from Godot to RealityKit.
 //  Created by Kevin Watters on 1/3/24.
 
 let HANDLE_RUNLOOP_MANUALLY = true
+let DO_EXTRA_DEBUGGING = false
 
 import Foundation
 import SwiftUI
@@ -539,10 +540,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                         entity.setParent(parent)
                     }
                 }
-                entity.position = .init(drawEntry.node.position)
-                entity.orientation = .init(drawEntry.node.basis.getRotationQuaternion())
-                entity.scale = .init(drawEntry.node.scale)
-                //entity.transform = Transform(drawEntry.node.transform) // TODO: this should be equivalent to the above lines; but the Z is reversed .... fix the Transform() constructor!
+                entity.transform = Transform(drawEntry.node.transform) // TODO: this should be equivalent to the above lines; but the Z is reversed .... fix the Transform() constructor!
                 entity.isEnabled = drawEntry.node.visible // TODO: Godot visibility might still do _process..., but I'm pretty sure Entity.isEnabled with false will disable processing for the corresponding RealityKit Entity. This will probably be a problem.
                 
                 // TODO: we might be able to register for an event when the bone poses change, and respond to that, instead of doing a per frame check. @Perf
@@ -552,13 +550,18 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                         var jointNames: [String] = []
                         
                         for boneIdx in 0..<skeleton.getBoneCount() {
-                            let pose = skeleton.getBonePose(boneIdx: boneIdx)
-                            let boneName = skeleton.getBoneName(boneIdx: boneIdx)
-                            transforms.append(Transform(pose))
-                            jointNames.append(boneName)
+                            transforms.append(Transform(skeleton.getBonePose(boneIdx: boneIdx)))
+                            if DO_EXTRA_DEBUGGING {
+                                jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
+                            }
                         }
                         
                         modelEntity.jointTransforms = transforms
+                        if DO_EXTRA_DEBUGGING {
+                            if jointNames != modelEntity.jointNames {
+                                logError("joint names do not match \(jointNames) \(modelEntity.jointNames)")
+                            }
+                        }
                     }
                 }
             }
