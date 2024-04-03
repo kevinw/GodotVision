@@ -540,7 +540,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                         entity.setParent(parent)
                     }
                 }
-                entity.transform = Transform(drawEntry.node.transform) // TODO: this should be equivalent to the above lines; but the Z is reversed .... fix the Transform() constructor!
+                entity.position = .init(drawEntry.node.position)
+                entity.orientation = .init(drawEntry.node.basis.getRotationQuaternion())
+                entity.scale = .init(drawEntry.node.scale)
+                // entity.transform = Transform(drawEntry.node.transform) // TODO: this should be equivalent to the above lines; but the Z is reversed .... fix the Transform() constructor!
                 entity.isEnabled = drawEntry.node.visible // TODO: Godot visibility might still do _process..., but I'm pretty sure Entity.isEnabled with false will disable processing for the corresponding RealityKit Entity. This will probably be a problem.
                 
                 // TODO: we might be able to register for an event when the bone poses change, and respond to that, instead of doing a per frame check. @Perf
