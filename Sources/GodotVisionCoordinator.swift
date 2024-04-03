@@ -302,7 +302,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             
             if let meshInstance3D = node as? MeshInstance3D {
                 if let mesh = meshInstance3D.mesh {
-                    let skeleton3D = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D
+                    let skeleton3D = meshInstance3D.skeleton.isEmpty() ? nil : (meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D)
                     entry.shape = .Mesh(mesh, skeleton3D)
                     for i in 0...mesh.getSurfaceCount() - 1 {
                         var material: SwiftGodot.Material? = nil
