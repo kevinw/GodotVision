@@ -61,11 +61,21 @@ class GodotSwiftBridge: Node3D {
     }
     
     @Callable func onAudioStreamPlayerPlayed(audioStreamPlayer3D: AudioStreamPlayer3D) {
+        onPlayOrPreload(audioStreamPlayer3D: audioStreamPlayer3D, prepareOnly: false)
+    }
+    
+    @Callable func onAudioStreamPlayerPrepare(audioStreamPlayer3D: AudioStreamPlayer3D) {
+        onPlayOrPreload(audioStreamPlayer3D: audioStreamPlayer3D, prepareOnly: true)
+    }
+    
+    private func onPlayOrPreload(audioStreamPlayer3D: AudioStreamPlayer3D, prepareOnly: Bool) {
+            
         if let resourcePath = audioStreamPlayer3D.stream?.resourcePath {
             let godotInstanceID = audioStreamPlayer3D.getInstanceId()
             onAudioStreamPlayed?(.init(godotInstanceID: Int64(godotInstanceID),
                                        resourcePath: resourcePath,
-                                       volumeDb: audioStreamPlayer3D.volumeDb))
+                                       volumeDb: audioStreamPlayer3D.volumeDb,
+                                       prepareOnly: prepareOnly))
         }
     }
     

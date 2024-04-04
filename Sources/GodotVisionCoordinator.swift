@@ -51,6 +51,8 @@ struct AudioStreamPlay {
     var godotInstanceID: Int64 = 0
     var resourcePath: String
     var volumeDb: Double = 0
+    var prepareOnly: Bool = false
+    var retryCount = 0
 }
 
 public class GodotVisionCoordinator: NSObject, ObservableObject {
@@ -172,11 +174,16 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 self.startMirroringMeshForNode(node3D)
             }
             
-            if obj is AudioStreamPlayer3D {
+            if let audioStreamPlayer3D = obj as? AudioStreamPlayer3D {
                 if obj.hasSignal("on_play") {
                     let _ = obj.connect(signal: "on_play", callable: .init(object: GodotSwiftBridge.instance, method: .init("onAudioStreamPlayerPlayed")))
                 } else {
                     print("WARNING: You're using AudioStreamPlayer3D, but we couldn't find an 'on_play' signal. Did you use RKAudioStreamPlayer? Remember to call '.play_rk()' to trigger the sound effect as well.")
+                }
+                
+                // See if we need to prepare the audio resource (prevents a hitch on first play).
+                if let autoPrepareResource = Bool(obj.get(property: "auto_prepare_resource")), autoPrepareResource {
+                    GodotSwiftBridge.instance.onAudioStreamPlayerPrepare(audioStreamPlayer3D: audioStreamPlayer3D)
                 }
             }
         }
@@ -418,8 +425,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             // TODO: ask visionOS application to quit? or...?
         }
         
+        var retries: [AudioStreamPlay] = []
+        
         defer { 
-            audioStreamPlays.removeAll()
+            audioStreamPlays = retries
             godotInstanceIDsRemovedFromTree.removeAll()
         }
         
@@ -434,12 +443,23 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         
         // Play any AudioStreamPlayer3D sounds
-        for audioStreamPlay in audioStreamPlays {
-            if let entity = entity(forGodotInstanceID: audioStreamPlay.godotInstanceID),
-               let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath)
+        for var audioStreamPlay in audioStreamPlays {
+            guard let entity = entity(forGodotInstanceID: audioStreamPlay.godotInstanceID) else {
+                audioStreamPlay.retryCount += 1
+                if audioStreamPlay.retryCount < 100 {
+                    retries.append(audioStreamPlay) // we may not have seen the instance yet.
+                }
+                continue
+            }
+            
+            if let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath)
             {
-                let audioPlaybackController = entity.playAudio(audioResource)
-                audioPlaybackController.gain = audioStreamPlay.volumeDb
+                if audioStreamPlay.prepareOnly {
+                    let _ = entity.prepareAudio(audioResource)
+                } else {
+                    let audioPlaybackController = entity.playAudio(audioResource)
+                    audioPlaybackController.gain = audioStreamPlay.volumeDb
+                }
             }
         }
         
