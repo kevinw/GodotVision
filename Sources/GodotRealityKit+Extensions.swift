@@ -22,25 +22,15 @@ func uiColor(forGodotColor c: SwiftGodot.Color) -> UIColor {
 
 extension RealityKit.Transform {
     init(_ godotTransform: SwiftGodot.Transform3D) {
-        self.init(matrix: simd_float4x4(godotTransform))
+        self.init(scale: .init(godotTransform.basis.getScale()),
+                  rotation: .init(godotTransform.basis.getRotationQuaternion()),
+                  translation: .init(godotTransform.origin))
     }
 }
 
 extension simd_float4x4 {
     init(_ godotTransform: SwiftGodot.Transform3D) {
-        
-        let basis = godotTransform.basis // * SwiftGodot.Basis(axis: SwiftGodot.Vector3(x: 0, y: 0, z: 1), angle: .pi)
-        
-        let col0 = basis.x
-        let col1 = basis.y
-        let col2 = basis.z
-        let col3 = godotTransform.origin
-        
-        
-        self.init(rows: [simd_float4(col0.x, col1.x, col2.x, col3.x),
-                         simd_float4(col0.y, col1.y, col2.y, col3.y),
-                         simd_float4(col0.z, col1.z, col2.z, col3.z),
-                         simd_float4(0, 0, 0, 1)])
+        self = RealityKit.Transform(godotTransform).matrix
     }
 }
 
