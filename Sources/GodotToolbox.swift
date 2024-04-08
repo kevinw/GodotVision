@@ -25,11 +25,66 @@ func getPackFileURLString() -> String {
     return url.absoluteString.removingStringPrefix("file://")
 }
 
+public func discoverGodotProjectsInBundle() async -> [URL] {
+    var godotProjectFiles = [URL]()
+    if let resourceURL = Bundle.main.resourceURL, let enumerator = FileManager.default.enumerator(at: resourceURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) {
+        for case let fileURL as URL in enumerator {
+            let fileAttributes: URLResourceValues
+            do {
+                fileAttributes = try fileURL.resourceValues(forKeys:[.isRegularFileKey])
+            } catch {
+                print(error, fileURL)
+                continue
+            }
+            
+            if fileAttributes.isRegularFile ?? false, fileURL.pathExtension == "godot" {
+                godotProjectFiles.append(fileURL)
+            }
+        }
+    }
+    
+    let regex = try! Regex("config/name=\"(.+)\"")
+    //let regex = /foo/
+    for godotProjectFile in godotProjectFiles {
+        do {
+            for try await line in godotProjectFile.lines {
+                // config/name="Gazewords"
+                if let match = line.firstMatch(of: regex), match.count > 0, let substring = match[1].substring {
+                    let projectName = String(substring)
+                    print("PROJECT NAME", projectName)
+                }
+
+            }
+        } catch {
+            print(error)
+        }
+    }
+    
+    
+    return .init()
+    
+}
+
 func fileUrl(forGodotResourcePath resourcePath: String) -> URL {
     getGodotProjectURL().appendingPathComponent(resourcePath.removingStringPrefix("res://"))
 }
 
 func getGodotProjectURL() -> URL {
+    
+    /*
+    print("------getGodotProjectURL------")
+    
+    
+
+    
+    for file in godotProjectFiles {
+        
+        print("  \(file)")
+    }
+     */
+    
+    
+    
     let projectFolderName = "Godot_Project"
     guard let url = Bundle.main.url(forResource: projectFolderName, withExtension: nil) else {
         fatalError("ERROR: could not find '\(projectFolderName)' folder in Bundle.main")

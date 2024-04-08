@@ -452,14 +452,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 continue
             }
             
-            if let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath)
-            {
-                if audioStreamPlay.prepareOnly {
-                    let _ = entity.prepareAudio(audioResource)
-                } else {
-                    let audioPlaybackController = entity.playAudio(audioResource)
-                    audioPlaybackController.gain = audioStreamPlay.volumeDb
-                }
+            guard let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath) else {
+                continue
+            }
+
+            if audioStreamPlay.prepareOnly {
+                let _ = entity.prepareAudio(audioResource)
+            } else {
+                let audioPlaybackController = entity.playAudio(audioResource)
+                audioPlaybackController.gain = audioStreamPlay.volumeDb
             }
         }
         
