@@ -20,6 +20,22 @@ private let whiteNonMetallic = SimpleMaterial(color: .white, isMetallic: false)
 let VISION_VOLUME_CAMERA_GODOT_NODE_NAME = "VisionVolumeCamera"
 let SHOW_CORNERS = false
 
+struct NodeData {
+    enum Flags: UInt32 {
+        case VISIBLE = 1
+    }
+    
+    var objectID: Int64
+    var parentID: Int64
+    var pos: simd_float4
+    var rot: simd_quatf
+    var scl: simd_float4
+    
+    var nativeHandle: UnsafeRawPointer
+    var flags: UInt32
+    var pad0: Float
+}
+
 enum ShapeSubType {
     case None
     case Box(size: simd_float3)
@@ -41,12 +57,6 @@ struct DrawEntry {
     var node: SwiftGodot.Node3D
 }
 
-struct InterThread {
-    var drawEntries: [DrawEntry] = []
-    var generation: UInt64 = 0
-    
-}
-
 struct AudioStreamPlay {
     var godotInstanceID: Int64 = 0
     var resourcePath: String
@@ -60,18 +70,16 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         var godotProjectFileUrl: URL? = nil /// Where to find the Godot project files. Defaults to `Godot_Project` in the main application bundle.
     }
     
-    private var godotInstanceIDToEntityID: [Int64: Entity.ID] = [:]
+    private var godotInstanceIDToEntity: [Int64: Entity] = [:]
     
-    private var godotEntitiesParent: Entity! = nil /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
+    private var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
     private var eventSubscription: EventSubscription? = nil
+    private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
     private var nodeAddedToken: SwiftGodot.Object? = nil
     private var nodeRemovedToken: SwiftGodot.Object? = nil
     private var processFrameToken: SwiftGodot.Object? = nil
     private var receivedRootNode = false
-    private var mirroredGodotNodes: [Node3D] = [] /// Godot Node3Ds whose transforms we synchronize to RealityKit.
-    private var interThread: InterThread = .init()
     private var resourceCache: ResourceCache = .init()
-    private var lastRendereredGeneration: UInt64 = .max
     private var sceneTree: SceneTree? = nil
     private var volumeCamera: SwiftGodot.Node3D? = nil
     private var audioStreamPlays: [AudioStreamPlay] = []
@@ -147,70 +155,57 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
         
         // the packfile load happens after this callback. so as a hack we use nodeAdded for now to notice a specially named root node coming into being.
-        nodeAddedToken = sceneTree.nodeAdded.connect(onNodeAdded)
-        nodeRemovedToken = sceneTree.nodeRemoved.connect(onNodeRemoved)
-        processFrameToken = sceneTree.processFrame.connect(onGodotFrame)
+        
+        nodeTransformsChangedToken = sceneTree.nodeTransformsChanged.connect(onNodeTransformsChanged)
+        nodeAddedToken             = sceneTree.nodeAdded.connect(onNodeAdded)
+        nodeRemovedToken           = sceneTree.nodeRemoved.connect(onNodeRemoved)
+        processFrameToken          = sceneTree.processFrame.connect(onGodotFrame)
         
         self.sceneTree = sceneTree
+        
+        #if false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            print("RK HIEARCHY-------")
+            printEntityTree(self.godotEntitiesParent)
+        }
+        #endif
     }
     
     private func onNodeRemoved(_ node: SwiftGodot.Node) {
-        if let index = mirroredGodotNodes.firstIndex(where: { $0 == node }) {
-            mirroredGodotNodes.remove(at: index)
-        }
-        
-        // Tell RealityKit to remove its entity for this.
-        let instanceID = node.getInstanceId()
-        let _ = godotInstanceIDsRemovedFromTree.insert(instanceID)
+        let _ = godotInstanceIDsRemovedFromTree.insert(node.getInstanceId())
     }
     
-    private func onNodeAdded(_ node: SwiftGodot.Node) {
-        // TODO: this is a hack to get around the fact that the nodes coming in don't cast properly as their subclass yet
-        let id = Int64(node.getInstanceId())
-        GodotSwiftBridge.runLater {
-            guard let obj = GD.instanceFromId(instanceId: id) else { return }
-            
-            if let node3D = obj as? Node3D {
-                self.startMirroringMeshForNode(node3D)
-            }
-            
-            if let audioStreamPlayer3D = obj as? AudioStreamPlayer3D {
-                if obj.hasSignal("on_play") {
-                    let _ = obj.connect(signal: "on_play", callable: .init(object: GodotSwiftBridge.instance, method: .init("onAudioStreamPlayerPlayed")))
-                } else {
-                    print("WARNING: You're using AudioStreamPlayer3D, but we couldn't find an 'on_play' signal. Did you use RKAudioStreamPlayer? Remember to call '.play_rk()' to trigger the sound effect as well.")
-                }
-                
-                // See if we need to prepare the audio resource (prevents a hitch on first play).
-                if let autoPrepareResource = Bool(obj.get(property: "auto_prepare_resource")), autoPrepareResource {
-                    GodotSwiftBridge.instance.onAudioStreamPlayerPrepare(audioStreamPlayer3D: audioStreamPlayer3D)
-                }
-            }
+    private func onNodeTransformsChanged(_ packedByteArray: PackedByteArray) {
+        guard let data = packedByteArray.asDataNoCopy() else {
+            return
         }
         
+        data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
+            ptr.withMemoryRebound(to: NodeData.self) { nodeDatas in
+                _receivedNodeDatas(nodeDatas)
+            }
+        }
+    }
+    
+    private var nodeIdsForNewlyEnteredNodes: [(Int64, Bool)] = []
+    
+    private func onNodeAdded(_ node: SwiftGodot.Node) {
         let isRoot = node.getParent() == node.getTree()?.root
+        
+        // TODO: Hack to get around the fact that the nodes coming in don't cast properly as their subclass yet. outside of this signal handler they do, so we store the id for later.
+        nodeIdsForNewlyEnteredNodes.append((Int64(node.getInstanceId()), isRoot))
+        
         if isRoot && !receivedRootNode {
             receivedRootNode = true
-            // print("GOT ROOT NODE, attaching callback runner", node)
+            
+            resetRealityKit()
+            
+            //print("GOT ROOT NODE, attaching callback runner", node)
             node.addChild(node: GodotSwiftBridge.instance)
             GodotSwiftBridge.instance.onAudioStreamPlayed = { [weak self] (playInfo: AudioStreamPlay) -> Void in
                 guard let self else { return }
                 audioStreamPlays.append(playInfo)
             }
-        }
-    }
-    
-    private func startMirroringMeshForNode(_ node: SwiftGodot.Node3D) {
-        if mirroredGodotNodes.firstIndex(of: node) != nil {
-            logError("already mirroring node \(node)")
-            return
-        }
-        
-        mirroredGodotNodes.append(node)
-        
-        // we notice a specially named node for the "bounds"
-        if node.name == VISION_VOLUME_CAMERA_GODOT_NODE_NAME {
-            didReceiveGodotVolumeCamera(node)
         }
     }
     
@@ -254,78 +249,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     func resetRealityKit() {
         assert(Thread.current.isMainThread)
         audioStreamPlays.removeAll()
-        mirroredGodotNodes.removeAll()
         resourceCache.reset()
+        skeletonEntities.removeAll()
         for child in godotEntitiesParent.children.map({ $0 }) {
             child.removeFromParent()
         }
     }
     
     private func onGodotFrame() {
-        var shapes: [DrawEntry] = []
-
-        for node in mirroredGodotNodes {
-            /* NOTE: this isInstanceIdValid check is suspect, but I get crashes without it. with it, I get this message in godot:
-             
-                    USER ERROR: Condition "slot >= slot_max" is true. Returning: nullptr
-                       at: get_instance (./core/object/object.h:1033)
-             
-            There's something about nodes being freed which we don't pick up on fast enough.
-             
-             */
-            if !GD.isInstanceIdValid(id: Int64(node.getInstanceId())) || !node.isInsideTree() {
-                onNodeRemoved(node)
-                continue
-            }
-            
-            // TODO: separate these into "update" packets and "init" packets...
-            if let colObj3D = node as? CollisionObject3D, colObj3D.inputRayPickable {
-                let owner_ids = colObj3D.getShapeOwners()
-                for ownerId in owner_ids {
-                    if ownerId < 0 {
-                        logError("ownerId < 0")
-                        continue
-                    }
-                    let owner_id = UInt32(ownerId)
-                    let shapeCount = colObj3D.shapeOwnerGetShapeCount(ownerId: owner_id)
-                    for _ in 0..<shapeCount {
-                        // let shape = colObj3D.shapeOwnerGetShape(ownerId: owner_id, shapeId: shape_id)
-                        // print("SHAPE", shape)
-                    }
-                }
-            }
-            
-            // TODO: this is wrong, just using it as a marker for now
-            let inputRayPickable: ShapeSubType? = ((node as? CollisionObject3D)?.inputRayPickable ?? false) ? .Box(size: .one) : nil
-            
-            var entry = DrawEntry(name: node.name.description, // TODO: only use name on debug builds??
-                                  instanceId: Int64(node.getInstanceId()),
-                                  parentId: Int64(node.getParent()?.getInstanceId() ?? 0),
-                                  inputRayPickable: inputRayPickable,
-                                  hoverEffect: .init(node.getMeta(name: "hover_effect", default: Variant(false))) ?? false,
-                                  node: node)
-            
-            entry.shape = .None
-            
-            if let meshInstance3D = node as? MeshInstance3D {
-                if let mesh = meshInstance3D.mesh {
-                    let skeleton3D = meshInstance3D.skeleton.isEmpty() ? nil : (meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D)
-                    entry.shape = .Mesh(mesh, skeleton3D)
-                    for i in 0...mesh.getSurfaceCount() - 1 {
-                        var material: SwiftGodot.Material? = nil
-                        material = meshInstance3D.getActiveMaterial(surface: i)
-                        if let material {
-                            entry.materials.append(resourceCache.materialEntry(forGodotMaterial: material))
-                        }
-                    }
-                }
-            }
-            
-            shapes.append(entry)
-        }
-        
-        interThread.drawEntries = shapes
-        interThread.generation += 1
         if let volumeCamera {
             // should do rotation too, but idk how to go from godot rotation to RK 'orientation'
             // ie: physicsEntitiesParent.orientation = some_function(volumeCamera.rotation)
@@ -367,18 +298,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         eventSubscription = content.subscribe(to: SceneEvents.Update.self, realityKitPerFrameTick)
         
         // Create a root Entity to store all our mirrored Godot nodes-turned-RealityKit entities.
-        let godotEntitiesParent = Entity()
         godotEntitiesParent.name = "GODOTRK_ROOT"
-        self.godotEntitiesParent = godotEntitiesParent
         
-        metaRoot.name = "META_ROOT"
-        metaRoot.addChild(godotEntitiesParent)
-        content.add(metaRoot)
+        content.add(godotEntitiesParent)
         
         return godotEntitiesParent
     }
-    
-    var metaRoot: Entity = Entity()
 
     public func viewDidDisappear() {
         if let eventSubscription {
@@ -388,6 +313,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         // Disconnect SceneTree signals
         if let sceneTree {
+            if let nodeTransformsChangedToken {
+                sceneTree.nodeTransformsChanged.disconnect(nodeTransformsChangedToken)
+                self.nodeTransformsChangedToken = nil
+            }
             if let nodeAddedToken {
                 sceneTree.nodeAdded.disconnect(nodeAddedToken)
                 self.nodeAddedToken = nil
@@ -419,11 +348,190 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         return audioResource
     }
     
-    func realityKitPerFrameTick(_ event: SceneEvents.Update) {
+    private func _createRealityKitEntityForNewNode(_ node: SwiftGodot.Node) -> Entity {
+        var materials: [RealityKit.Material]? = nil
+        var skeleton3D: SwiftGodot.Skeleton3D? = nil
+        var mesh: SwiftGodot.Mesh? = nil
+
+        if let meshInstance3D = node as? MeshInstance3D {
+            skeleton3D = meshInstance3D.skeleton.isEmpty() ? nil : (meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D)
+            mesh = meshInstance3D.mesh
+            if let mesh {
+                materials = []
+                for i in 0...mesh.getSurfaceCount() - 1 {
+                    if let material = meshInstance3D.getActiveMaterial(surface: i) {
+                        materials?.append(resourceCache.materialEntry(forGodotMaterial: material).getMaterial(resourceCache: resourceCache))
+                    }
+                }
+            }
+        }
+        
+        var entity: Entity
+        
+        if let mesh, let node3D = node as? Node3D, let mesh = createRealityKitMesh(node: node3D, godotMesh: mesh, godotSkeleton: skeleton3D) {
+            let usedMaterials = (materials?.count ?? 0 == 0) ? [SimpleMaterial(color: .white, isMetallic: false)] : materials!
+            entity = ModelEntity(mesh: mesh, materials: usedMaterials)
+        } else {
+            entity = Entity()
+        }
+
+        let instanceID = Int64(node.getInstanceId())
+        
+        entity.name = "\(node.name)"
+        godotInstanceIDToEntity[instanceID] = entity
+        godotEntitiesParent.addChild(entity)
+        
+        // we only want to set shadows on entities with a mesh
+        if mesh != nil {
+            entity.components.set(GroundingShadowComponent(castsShadow: true))
+        }
+        
+        let hoverEffect = Bool(node.getMeta(name: "hover_effect", default: Variant(false))) ?? false
+        
+        // TODO: we could have more fine-graned input ray pickable shaeps
+        let inputRayPickable: ShapeSubType? = ((node as? CollisionObject3D)?.inputRayPickable ?? false) ? .Box(size: .one) : nil
+        if inputRayPickable != nil {
+            DispatchQueue.main.async {
+                let bounds = entity.visualBounds(relativeTo: entity.parent)
+                let collisionShape: RealityKit.ShapeResource = .generateBox(size: bounds.extents)
+                var collision = CollisionComponent(shapes: [collisionShape])
+                collision.filter = .init(group: [], mask: []) // disable for collision detection
+                
+                // TODO: this is a dummy collision shape from the visual bounds of the entity. we can do something smarter based on the actual godot shapes!
+                
+                entity.components.set(InputTargetComponent())
+                
+                if hoverEffect {
+                    entity.components.set(HoverEffectComponent())
+                }
+                entity.components.set(collision)
+            }
+        }
+        
+        if let node3D = node as? Node3D {
+            entity.transform = RealityKit.Transform(node3D.transform)
+        }
+        
+        return entity
+    }
+    
+    private func _receivedNodeDatas(_ nodeDatas: UnsafeBufferPointer<NodeData>) {
+#if false
+        var transformSetCount = 0
+        let swiftStride = MemoryLayout<NodeData>.stride
+        let swiftSize = MemoryLayout<NodeData>.size
+        //print("SWIFT offsetof transform", MemoryLayout<NodeData>.offset(of: \.transform))
+        print("SWIFT offsetof rotation", MemoryLayout<NodeData>.offset(of: \.rot))
+        print("SWIFT stride", swiftStride, "size", swiftSize)
+        print("Swift bound array has", nodeDatas.count, "items.")
+        print("DATA", ptr.baseAddress, "has", data.count, "bytes of raw data")
+#endif
+        for nodeData in nodeDatas {
+            if nodeData.objectID == 0 { continue }
+            
+            guard let entity = godotInstanceIDToEntity[nodeData.objectID] else {
+                continue
+            }
+            
+            // Update Transform
+            var t = RealityKit.Transform()
+            t.translation = .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z)
+            t.rotation = nodeData.rot
+            t.scale = .init(nodeData.scl.x, nodeData.scl.y, nodeData.scl.z)
+            
+            entity.transform = t
+            //transformSetCount += 1
+            
+            // print(entity.id, t.translation)
+            
+            // Update isEnabled
+            entity.isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
+        }
+    }
+    
+    private func isSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) -> Bool {
+        if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
+            if let meshInstance3D = node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    private func updateSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) {
+        // TODO: we might be able to register for an event when the bone poses change, and respond to that, instead of doing a per frame check. @Perf
+        if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
+            if let meshInstance3D = node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
+                var transforms: [Transform] = []
+                var jointNames: [String] = []
+                
+                for boneIdx in 0..<skeleton.getBoneCount() {
+                    transforms.append(Transform(skeleton.getBonePose(boneIdx: boneIdx)))
+                    if DO_EXTRA_DEBUGGING {
+                        jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
+                    }
+                }
+                
+                modelEntity.jointTransforms = transforms
+                if DO_EXTRA_DEBUGGING {
+                    if jointNames != modelEntity.jointNames {
+                        logError("joint names do not match \(jointNames) \(modelEntity.jointNames)")
+                    }
+                }
+            }
+        }
+    }
+    
+    private var skeletonEntities: Set<Entity> = .init()
+    
+    private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         if stepGodotFrame() {
             print("GODOT HAS QUIT")
             // TODO: ask visionOS application to quit? or...?
         }
+        
+        for (id, isRoot) in nodeIdsForNewlyEnteredNodes {
+            guard let node = GD.instanceFromId(instanceId: id) as? Node else {
+                logError("No new Node instance for id \(id)")
+                continue
+            }
+            
+            let entity = _createRealityKitEntityForNewNode(node)
+            if let node3D = node as? Node3D, isSkeletonNode(node: node3D, entity: entity) {
+                entity.components.set(GodotNode(node3D: node3D))
+                skeletonEntities.insert(entity)
+            }
+            
+            // we notice a specially named node for the "bounds"
+            if node.name == VISION_VOLUME_CAMERA_GODOT_NODE_NAME, let node3D = node as? Node3D {
+                didReceiveGodotVolumeCamera(node3D)
+            }
+            
+            if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
+                if node.hasSignal("on_play") {
+                    let _ = node.connect(signal: "on_play", callable: .init(object: GodotSwiftBridge.instance, method: .init("onAudioStreamPlayerPlayed")))
+                } else {
+                    print("WARNING: You're using AudioStreamPlayer3D, but we couldn't find an 'on_play' signal. Did you use RKAudioStreamPlayer? Remember to call '.play_rk()' to trigger the sound effect as well.")
+                }
+                
+                // See if we need to prepare the audio resource (prevents a hitch on first play).
+                if let autoPrepareResource = Bool(node.get(property: "auto_prepare_resource")), autoPrepareResource {
+                    GodotSwiftBridge.instance.onAudioStreamPlayerPrepare(audioStreamPlayer3D: audioStreamPlayer3D)
+                }
+            }
+            
+            if !isRoot, let nodeParent = node.getParent() {
+                let parentId = Int64(nodeParent.getInstanceId())
+                if let parent = godotInstanceIDToEntity[parentId] {
+                    entity.setParent(parent)
+                } else {
+                    logError("could not find parent for id \(parentId)")
+                }
+            }
+        }
+        nodeIdsForNewlyEnteredNodes.removeAll()
+
         
         var retries: [AudioStreamPlay] = []
         
@@ -432,14 +540,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             godotInstanceIDsRemovedFromTree.removeAll()
         }
         
-        let (drawEntries, generation) = (interThread.drawEntries, interThread.generation)
-
         func entity(forGodotInstanceID godotInstanceId: Int64) -> Entity? {
-            if let entityID = godotInstanceIDToEntityID[godotInstanceId] {
-               return event.scene.findEntity(id: entityID)
-            }
-            
-            return nil
+            return godotInstanceIDToEntity[godotInstanceId]
         }
         
         // Play any AudioStreamPlayer3D sounds
@@ -465,133 +567,25 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         // Remove any RealityKit Entities for Godot nodes that were removed from the Godot tree.
         for instanceIdRemovedFromTree in godotInstanceIDsRemovedFromTree {
-            guard let entityID = godotInstanceIDToEntityID[Int64(instanceIdRemovedFromTree)] else { continue }
-            guard let entity = event.scene.findEntity(id: entityID) else { continue }
+            guard let entity = godotInstanceIDToEntity[Int64(instanceIdRemovedFromTree)] else { continue }
+            entity.components.remove(GodotNode.self)
             entity.removeFromParent()
+            skeletonEntities.remove(entity)
+            godotInstanceIDToEntity.removeValue(forKey: Int64(instanceIdRemovedFromTree))
+        }
+        
+        // Update skeletons
+        for entity in skeletonEntities {
+            if let node = entity.components[GodotNode.self]?.node3D {
+                updateSkeletonNode(node: node, entity: entity)
+            }
         }
         
         godotEntitiesParent.position = volumeCameraPosition
-        if generation == lastRendereredGeneration { return }
-        lastRendereredGeneration = generation
-        
-        var retriedIndex: [Int: Bool] = [:]
-        var indices = Array(0..<drawEntries.count)
-        
-        for index in 0..<indices.count {
-            let drawEntry = drawEntries[index]
-            var entityID = godotInstanceIDToEntityID[drawEntry.instanceId]
-            var entity: Entity? = nil
-            if let entityID {
-                entity = event.scene.findEntity(id: entityID)
-            } else {
-                var materials: [RealityKit.Material]? = nil
-                if !drawEntry.materials.isEmpty {
-                    materials = drawEntry.materials.map { entry in
-                        entry.getMaterial(resourceCache: resourceCache)
-                    }
-                }
-                
-                var modelEntity: Entity
-                
-                switch drawEntry.shape {
-                case .Mesh(let mesh, let skeleton3D):
-                    if let mesh = createRealityKitMesh(node: drawEntry.node,
-                                                       godotMesh: mesh,
-                                                       godotSkeleton: skeleton3D)
-                    {
-                        modelEntity = ModelEntity(mesh: mesh, materials: materials ?? [whiteNonMetallic])
-                    } else {
-                        modelEntity = Entity()
-                    }
-                case .None:
-                    modelEntity = Entity()
-                default:
-                    modelEntity = Entity()
-                }
-                
-                modelEntity.name = "\(drawEntry.name ?? "Entity")(bodyID=\(drawEntry.instanceId))"
-                entityID = modelEntity.id
-                entity = modelEntity
-                godotInstanceIDToEntityID[drawEntry.instanceId] = modelEntity.id
-                godotEntitiesParent.addChild(modelEntity)
-                
-                // we only want to set shadows on entities with a mesh
-                switch drawEntry.shape {
-                case .None:
-                    fallthrough
-                default:
-                    // commenting out shadow for now because it really slows things down
-                    modelEntity.components.set(GroundingShadowComponent(castsShadow: true))
-//                    modelEntity.components.set(GroundingShadowComponent(castsShadow: false))
-                }
-                
-                if drawEntry.inputRayPickable != nil {
-                    DispatchQueue.main.async {
-                        let bounds = modelEntity.visualBounds(relativeTo: modelEntity.parent)
-                        let collisionShape: RealityKit.ShapeResource = .generateBox(size: bounds.extents)
-                        var collision = CollisionComponent(shapes: [collisionShape])
-                        collision.filter = .init(group: [], mask: []) // disable for collision detection
-                        
-                        // TODO: this is a dummy collision shape from the visual bounds of the entity. we can do something smarter based on the actual godot shapes!
-                        
-                        modelEntity.components.set(InputTargetComponent())
-                        if drawEntry.hoverEffect {
-                            modelEntity.components.set(HoverEffectComponent())
-                        }
-                        modelEntity.components.set(collision)
-                        
-                    }
-                }
-            }
-            
-            if let entity {
-                let parentRKID = godotInstanceIDToEntityID[drawEntry.parentId]
-                if drawEntry.parentId > 0 && parentRKID == nil {
-                    if retriedIndex[index] ?? false {
-                        logError("no parent in bodyIDToEntityMap for \(drawEntry.parentId)")
-                    } else {
-                        // Account for if drawEntries has children specified before parents (just put this entity back on the list to try later)
-                        retriedIndex[index] = true
-                        indices.append(index)
-                    }
-                } else {
-                    let parent = parentRKID != nil ? event.scene.findEntity(id: parentRKID!) : nil
-                    if entity.parent != parent {
-                        entity.setParent(parent)
-                    }
-                }
-                
-                entity.transform = Transform(drawEntry.node.transform) // TODO: this should be equivalent to the above lines; but the Z is reversed .... fix the Transform() constructor!
-                entity.isEnabled = drawEntry.node.visible // TODO: Godot visibility might still do _process..., but I'm pretty sure Entity.isEnabled with false will disable processing for the corresponding RealityKit Entity. This will probably be a problem.
-                
-                // TODO: we might be able to register for an event when the bone poses change, and respond to that, instead of doing a per frame check. @Perf
-                if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
-                    if let meshInstance3D = drawEntry.node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
-                        var transforms: [Transform] = []
-                        var jointNames: [String] = []
-                        
-                        for boneIdx in 0..<skeleton.getBoneCount() {
-                            transforms.append(Transform(skeleton.getBonePose(boneIdx: boneIdx)))
-                            if DO_EXTRA_DEBUGGING {
-                                jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
-                            }
-                        }
-                        
-                        modelEntity.jointTransforms = transforms
-                        if DO_EXTRA_DEBUGGING {
-                            if jointNames != modelEntity.jointNames {
-                                logError("joint names do not match \(jointNames) \(modelEntity.jointNames)")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
     }
     
     func godotInstanceFromRealityKitEntityID(_ eID: Entity.ID) -> SwiftGodot.Object? {
-        for (godotInstanceID, rkEntityID) in godotInstanceIDToEntityID where rkEntityID == eID {
+        for (godotInstanceID, rkEntity) in godotInstanceIDToEntity where rkEntity.id == eID {
             guard let godotInstance = GD.instanceFromId(instanceId: godotInstanceID) else {
                 logError("could not get Godot instance from id \(godotInstanceID)")
                 continue
@@ -604,9 +598,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     func rkGestureLocationToGodotWorldPosition(_ value: EntityTargetValue<DragGesture.Value>, _ point3D: Point3D) -> SwiftGodot.Vector3 {
-        //
         // TODO: this is 100% not actually correct.
-        //
         let sceneLoc = value.convert(point3D, from: .local, to: .scene)
         let godotLoc = godotEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil) + simd_float3(0, 0, volumeCameraBoxSize.z * 0.5)
         return .init(godotLoc)
@@ -667,4 +659,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         // TODO: I think SwiftGodot provides a better way to emit signals than all these Variant() constructors
         obj.emitSignal("input_event", Variant.init(), Variant(godotEvent), Variant(position), Variant(normal), Variant(shape_idx))
     }
+}
+
+
+struct GodotNode: Component {
+    var node3D: Node3D? = nil
 }
