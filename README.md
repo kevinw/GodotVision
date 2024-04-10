@@ -49,6 +49,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 * Undo ugly InterThread/locking stuff now that we’re running on the main thread
 * A nice way to substitute RealityKit authored stuff for Godot nodes; i.e., maybe you have a particle system you want to use based on some flag/layer/node name, etc.
 * More (prettier!) example scenes!
+* Map MultiMeshInstance3D to instanced RealityKit entities?
 * Skinned meshes
 * Use SwiftUI attachments in Godot scene?
 * Loading scenes from within Godot should work seamlessly
@@ -61,3 +62,26 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 * Use the upcoming Godot Metal port and share textures/buffers directly when possible. Find out what kinds of shader translation are "easy" in this shiny new Metal world
 * A build system so you can make a super thin version of Godot without any of the modules you don't need, shrinking the final binary size.
 * Investigate creating a [Godot "server"](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) so we could do one per-frame memcopy for position/rotation/translation of Nodes which have moved.
+
+# Setup
+Steps to add GodotVision to an existing VisionOS XCode project:
+
+## Import Godot_Project
+1. Copy Godot_Project folder from this repo to your target repo
+
+## Add GodotVision Package dependency
+1. Open App Settings by clicking on the App in the Navigator
+1. Choose your Target from the target list
+1. General -> Frameworks -> `+` -> "Add Other..." -> "Add Package Dependency..."
+1. In "Search or Enter Package URL": Enter `https://github.com/kevinw/GodotVision.git` (Make sure to add `.git`)
+1. "Add Package"
+
+## Change Swift Compiler Language
+1. Stay on the Target subpanel
+1. Build Settings
+1. "All" to open edit all options
+1. Under "Swift Compiler - Language", change "Swift Compiler - Language" to "C++ / Objective-C++"
+
+## Build
+1. Product -> Build
+
