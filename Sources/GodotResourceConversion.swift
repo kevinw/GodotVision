@@ -251,8 +251,7 @@ private func meshContents(node: Node3D,
         if verbose { print("surfIdx: \(surfIdx)") }
         
         let surfaceArrays = mesh.surfaceGetArrays(surfIdx: surfIdx)
-        MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
-        
+        // MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
         
         //
         // positions
@@ -389,7 +388,7 @@ private func meshContents(node: Node3D,
     return newContents
 }
 
-private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []
+// private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []
 
 private func reverseWindingOrder<T>(ofIndexBuffer buffer: [T]) -> [T]  where T: BinaryInteger {
     var result: [T] = Array.init(repeating: T(), count: buffer.count)
