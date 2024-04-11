@@ -49,7 +49,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 * A nice way to substitute RealityKit authored stuff for Godot nodes; i.e., maybe you have a particle system you want to use based on some flag/layer/node name, etc.
 * More (prettier!) example scenes!
 * Map MultiMeshInstance3D to instanced RealityKit entities?
-* Skinned meshes
+* ~~Skinned meshes~~
 * Use SwiftUI attachments in Godot scene?
 * Loading scenes from within Godot should work seamlessly
 * Support updating Godot project for released apps without an app store review cycle
