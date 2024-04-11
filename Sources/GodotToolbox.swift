@@ -5,6 +5,15 @@ import libgodot
 import SwiftGodot
 import SwiftGodotKit
 
+extension PackedByteArray {
+    /// Returns a new Data object with a copy of the data contained by this PackedByteArray
+    public func asDataNoCopy() -> Data? {
+        withUnsafeMutableAccessToData { ptr, count in 
+            Data(bytesNoCopy: ptr, count: count, deallocator: .none)
+        }
+    }
+}
+
 extension String {
     func removingStringPrefix(_ prefix: String) -> String {
         if starts(with: prefix) {
