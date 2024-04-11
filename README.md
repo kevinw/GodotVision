@@ -45,7 +45,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 * Live reload of Godot scene if saved from the editor 🤩
     * HTTP server serving the PCK file? Or simply the directory? Investigate how easy it would be to add (or use an existing) network layer to the Godot filesystem stuff.
 * ~~Audio sound effects via AudioStreamPlayer3D~~
-* Undo ugly InterThread/locking stuff now that we’re running on the main thread
+* ~~Undo ugly InterThread/locking stuff now that we’re running on the main thread~~
 * A nice way to substitute RealityKit authored stuff for Godot nodes; i.e., maybe you have a particle system you want to use based on some flag/layer/node name, etc.
 * More (prettier!) example scenes!
 * Map MultiMeshInstance3D to instanced RealityKit entities?
@@ -60,7 +60,7 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 
 * Use the upcoming Godot Metal port and share textures/buffers directly when possible. Find out what kinds of shader translation are "easy" in this shiny new Metal world
 * A build system so you can make a super thin version of Godot without any of the modules you don't need, shrinking the final binary size.
-* Investigate creating a [Godot "server"](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) so we could do one per-frame memcopy for position/rotation/translation of Nodes which have moved.
+* ~~Investigate creating a [Godot "server"](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) so we could do one per-frame memcopy for position/rotation/translation of Nodes which have moved.~~ (A version of this is implemented via a new [SceneTree signal](https://github.com/multijam/godot/commit/f09eb5198f52c3503eda82fc2986ab0e36a4ad17))
 
 # Setup
 Steps to add GodotVision to an existing VisionOS XCode project:
