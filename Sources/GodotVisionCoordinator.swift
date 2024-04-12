@@ -286,10 +286,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private static var didInitGodot = false
     
-    public func setupRealityKitScene(_ content: RealityViewContent, volumeSize: simd_double3, projectFileDir: String) -> Entity {
+    public func setupRealityKitScene(_ content: RealityViewContent, volumeSize: simd_double3, projectFileDir: String? = nil) -> Entity {
         assert(Thread.current.isMainThread)
         
-        projectContext.projectFolderName = projectFileDir
+        projectContext.projectFolderName = projectFileDir ?? DEFAULT_PROJECT_FOLDER_NAME
         resourceCache.projectContext = projectContext
         
         if Self.didInitGodot {
