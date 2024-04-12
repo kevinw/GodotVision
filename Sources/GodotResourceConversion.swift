@@ -11,6 +11,7 @@ import RealityKit
 import Foundation
 
 class ResourceCache {
+    var projectContext: GodotProjectContext? = nil
     var materials: [SwiftGodot.Material: MaterialEntry] = .init()
     var textures:  [SwiftGodot.Texture: TextureEntry] = .init()
     
@@ -70,7 +71,11 @@ class ResourceEntry<G, R> where G: SwiftGodot.Resource {
 class TextureEntry: ResourceEntry<SwiftGodot.Texture, RealityKit.TextureResource> {
     func getTexture(resourceCache: ResourceCache) -> RealityKit.TextureResource {
         if let godotTex = godotResource as? SwiftGodot.Texture2D {
-            return try! .load(contentsOf: fileUrl(forGodotResourcePath: godotTex.resourcePath))
+            if let projectContext = resourceCache.projectContext {
+                return try! .load(contentsOf: projectContext.fileUrl(forGodotResourcePath: godotTex.resourcePath))
+            } else {
+                logError("projectContext not set in ResourceCache")
+            }
         }
         
         return try! .load(named: "error-unknown-texture")

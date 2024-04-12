@@ -19,6 +19,7 @@ private let whiteNonMetallic = SimpleMaterial(color: .white, isMetallic: false)
 
 let VISION_VOLUME_CAMERA_GODOT_NODE_NAME = "VisionVolumeCamera"
 let SHOW_CORNERS = false
+let DEFAULT_PROJECT_FOLDER_NAME = "Godot_Project"
 
 struct AudioStreamPlay {
     var godotInstanceID: Int64 = 0
@@ -29,10 +30,6 @@ struct AudioStreamPlay {
 }
 
 public class GodotVisionCoordinator: NSObject, ObservableObject {
-    struct InitOptions {
-        var godotProjectFileUrl: URL? = nil /// Where to find the Godot project files. Defaults to `Godot_Project` in the main application bundle.
-    }
-    
     private var godotInstanceIDToEntity: [Int64: Entity] = [:]
     
     private var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
@@ -53,6 +50,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var volumeCameraBoxSize: simd_float3 = .one
     private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
     private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
+    
+    private var projectContext: GodotProjectContext = .init()
+    
     
     public func changeScaleIfVolumeSizeChanged(_ volumeSize: simd_double3) {
         if volumeSize != realityKitVolumeSize {
@@ -90,7 +90,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
-    public func initGodot() {
+    func initGodot() {
         var args = [
             ".",  // TODO: not sure about this, I think it's the "project directory" -- ios build command line eats the first argument.
             
@@ -103,8 +103,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         // Here we tell Godot where to find our Godot project.
         
-        // args.append(contentsOf: ["--main-pack", getPackFileURLString()])
-        args.append(contentsOf: ["--path", getProjectDir()])
+        args.append(contentsOf: ["--path", projectContext.getProjectDir()])
         
         // This is the SwiftGodotKit "entry" point
         runGodot(args: args,
@@ -115,7 +114,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     private func receivedSceneTree(sceneTree: SwiftGodot.SceneTree) {
-        // print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
+        print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
+        print(sceneTree.currentScene?.sceneFilePath)
         
         // the packfile load happens after this callback. so as a hack we use nodeAdded for now to notice a specially named root node coming into being.
         
@@ -284,8 +284,19 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
-    public func setupRealityKitScene(_ content: RealityViewContent, volumeSize: simd_double3) -> Entity {
+    private static var didInitGodot = false
+    
+    public func setupRealityKitScene(_ content: RealityViewContent, volumeSize: simd_double3, projectFileDir: String) -> Entity {
         assert(Thread.current.isMainThread)
+        
+        projectContext.projectFolderName = projectFileDir
+        resourceCache.projectContext = projectContext
+        
+        if Self.didInitGodot {
+            print("ERROR: Currently only one godot instance at a time is possible.")
+        }
+        initGodot()
+        Self.didInitGodot = true
         
         realityKitVolumeSize = volumeSize
         
@@ -325,6 +336,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
 
     public func viewDidDisappear() {
+        print("Cleaning up GodotVisionCoordinator.")
+        
         if let eventSubscription {
             eventSubscription.cancel()
             self.eventSubscription = nil
@@ -356,7 +369,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         var audioResource: AudioFileResource? = _audioResources[resourcePath]
         if audioResource == nil {
             do {
-                audioResource = try AudioFileResource.load(contentsOf: fileUrl(forGodotResourcePath: resourcePath))
+                audioResource = try AudioFileResource.load(contentsOf: projectContext.fileUrl(forGodotResourcePath: resourcePath))
             } catch {
                 logError(error)
                 return nil
@@ -652,3 +665,28 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 struct GodotNode: Component {
     var node3D: Node3D? = nil
 }
+
+class GodotProjectContext {
+    var projectFolderName: String? = nil
+    
+    func fileUrl(forGodotResourcePath resourcePath: String) -> URL {
+        getGodotProjectURL().appendingPathComponent(resourcePath.removingStringPrefix("res://"))
+    }
+
+    func getGodotProjectURL() -> URL {
+        if projectFolderName == nil {
+            print("*** WARNING, defaulting to DEFAULT_PROJECT_FOLDER_NAME")
+        }
+        let dirName = projectFolderName ?? DEFAULT_PROJECT_FOLDER_NAME
+        guard let url = Bundle.main.url(forResource: dirName, withExtension: nil) else {
+            fatalError("ERROR: could not find '\(dirName)' Godot project folder in Bundle.main")
+        }
+        return url
+    }
+
+    func getProjectDir() -> String {
+        // Godot is expecting a path without the file:// part for the packfile
+        getGodotProjectURL().absoluteString.removingStringPrefix("file://")
+    }
+}
+

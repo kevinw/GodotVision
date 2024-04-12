@@ -25,32 +25,6 @@ extension String {
     }
 }
 
-func getPackFileURLString() -> String {
-    guard let url = Bundle.main.url(forResource: "minimal", withExtension: "pck") else {
-        fatalError("ERROR: could not find minimal.pck in Bundle.main")
-    }
-    
-    // Godot is expecting a path without the file:// part for the packfile
-    return url.absoluteString.removingStringPrefix("file://")
-}
-
-func fileUrl(forGodotResourcePath resourcePath: String) -> URL {
-    getGodotProjectURL().appendingPathComponent(resourcePath.removingStringPrefix("res://"))
-}
-
-func getGodotProjectURL() -> URL {
-    let projectFolderName = "Godot_Project"
-    guard let url = Bundle.main.url(forResource: projectFolderName, withExtension: nil) else {
-        fatalError("ERROR: could not find '\(projectFolderName)' folder in Bundle.main")
-    }
-    return url
-}
-
-func getProjectDir() -> String {
-    // Godot is expecting a path without the file:// part for the packfile
-    getGodotProjectURL().absoluteString.removingStringPrefix("file://")
-}
-
 @Godot
 class GodotSwiftBridge: Node3D {
     static var _instance: GodotSwiftBridge? = nil

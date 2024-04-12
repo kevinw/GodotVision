@@ -27,9 +27,6 @@ public struct GodotVisionRealityViewModifier: ViewModifier {
                     coordinator.receivedDragEnded(value)
                 }
             }))
-            .onAppear {
-                coordinator.initGodot()
-            }
             .onDisappear {
                 coordinator.viewDidDisappear()
             }
