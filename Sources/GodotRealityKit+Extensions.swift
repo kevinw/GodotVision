@@ -39,7 +39,6 @@ extension simd_float3 {
         self.init(godotVector.x, godotVector.y, godotVector.z)
     }
     
-    // TODO: probably shouldn't be here
     func isApproximatelyEqualTo(_ v: Self) -> Bool {
         x.isApproximatelyEqualTo(v.x) &&
         y.isApproximatelyEqualTo(v.y) &&
@@ -115,7 +114,6 @@ extension SwiftGodot.Vector3 {
 
 
 extension Float {
-    // TODO: probably shouldn't be here
     func isApproximatelyEqualTo(_ f: Self) -> Bool {
         abs(self - f) < 0.000001
     }

@@ -189,7 +189,7 @@ func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.S
 
     for boneIdx in 0..<skeleton.getBoneCount() {
         jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
-        inverseBindPoseMatrices.append(getInverseBindPoseMatrix(skeleton: skeleton, boneIdx: boneIdx)) // TODO XXX does this need to be inverse?
+        inverseBindPoseMatrices.append(getInverseBindPoseMatrix(skeleton: skeleton, boneIdx: boneIdx))
         restPoseTransforms.append(RealityKit.Transform(skeleton.getBoneRest(boneIdx: boneIdx)))
         parentIndices.append(Int(skeleton.getBoneParent(boneIdx: boneIdx)))
     }
@@ -209,7 +209,7 @@ private func meshContents(node: Node3D,
                           verbose: Bool = false) throws -> MeshResource.Contents
 {
     if mesh.getSurfaceCount() == 0 {
-        fatalError("TODO: how to handle a Godot mesh with zero surfaces?")
+        return MeshResource.Contents()
     }
     
     enum ArrayType: Int { // TODO: are these already exposed from SwiftGodot somewhere?
