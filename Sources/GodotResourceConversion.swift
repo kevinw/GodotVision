@@ -251,8 +251,7 @@ private func meshContents(node: Node3D,
         if verbose { print("surfIdx: \(surfIdx)") }
         
         let surfaceArrays = mesh.surfaceGetArrays(surfIdx: surfIdx)
-        MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
-        
+        // MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH.append(surfaceArrays)
         
         //
         // positions
@@ -264,10 +263,23 @@ private func meshContents(node: Node3D,
         //
         // triangleIndices
         //
-        guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
-        let indicesArray = reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) })
-        meshPart.triangleIndices = MeshBuffers.TriangleIndices(indicesArray)
-        
+        let indicesVariant = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue]
+        var primitivesCount: Int? = nil
+        switch indicesVariant.gtype {
+        case .nil:
+            ()
+            // TODO: check to make sure RealityKit can render meshes without index buffers (it should be able to!)...
+            // print("mesh has no indices: \(mesh)")
+            // meshPart.triangleIndices = MeshBuffers.TriangleIndices(.init(0..<UInt32(verticesArray.count)))
+        case .packedInt32Array:
+            guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
+            let indicesArray = reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) })
+            primitivesCount = indicesArray.count
+            meshPart.triangleIndices = MeshBuffers.TriangleIndices(indicesArray)
+        default:
+            logError("ARRAY_INDEX was unexpected Variant type \(indicesVariant.gtype)")
+        }
+
         //
         // normals
         //
@@ -297,7 +309,7 @@ private func meshContents(node: Node3D,
         }
         
         if verbose {
-            print("  primitives count: \(indicesArray.count)")
+            print("  primitives count: \(String(describing: primitivesCount))")
             print("  positions.count:", verticesArray.count)
         }
         
@@ -389,7 +401,7 @@ private func meshContents(node: Node3D,
     return newContents
 }
 
-private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []
+// private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []
 
 private func reverseWindingOrder<T>(ofIndexBuffer buffer: [T]) -> [T]  where T: BinaryInteger {
     var result: [T] = Array.init(repeating: T(), count: buffer.count)

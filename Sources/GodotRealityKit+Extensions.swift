@@ -127,3 +127,18 @@ extension PackedFloat64Array: InitsFromVariant {}
 extension PackedVector3Array: InitsFromVariant {}
 extension PackedVector2Array: InitsFromVariant {}
 
+func printEntityTree(_ rkEntity: RealityKit.Entity, indent: String = "") {
+    func ori(_ o: simd_quatf) -> String {
+        "(r=\(o.real), image: \(o.imag.x), \(o.imag.y), \(o.imag.z))"
+    }
+    
+    func v3(_ p: simd_float3) -> String { "(\(p.x), \(p.y), \(p.z))" }
+    
+    print(indent, rkEntity.name, "pos=\(v3(rkEntity.position)), ori=\(ori(rkEntity.orientation))")
+    
+    let newIndent = "  \(indent)"
+    for child in rkEntity.children {
+        printEntityTree(child, indent: newIndent)
+    }
+}
+

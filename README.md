@@ -1,6 +1,6 @@
 # GodotVision
 
-### Questions? Join the [SwiftGodot Slack](https://join.slack.com/t/swiftongodot/shared_invite/zt-2aqygohvb-stSRGEAN~c3awuMwtaqCAA)
+### Questions? Join the [GodotVision Discord](https://discord.gg/WYxyWMAM)
 
 Godot headless on visionOS, rendered with RealityKit, so you can create shared-space visionOS experiences from Godot.
 
@@ -16,17 +16,36 @@ A big hack!
 
 Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDocs/documentation/swiftgodot/) documentation for how to hack on SwiftGodot/this project.
 
+
+# Setup
+Steps to add GodotVision to an existing VisionOS XCode project:
+
+## Import Godot_Project
+1. Copy Godot_Project folder from this repo to your target repo
+
+## Add GodotVision Package dependency
+1. Open App Settings by clicking on the App in the Navigator
+1. Choose your Target from the target list
+1. General -> Frameworks -> `+` -> "Add Other..." -> "Add Package Dependency..."
+1. In "Search or Enter Package URL": Enter `https://github.com/kevinw/GodotVision.git` (Make sure to add `.git`)
+1. "Add Package"
+
+## Change Swift Compiler Language
+1. Stay on the Target subpanel
+1. Build Settings
+1. "All" to open edit all options
+1. Under "Swift Compiler - Language", change "Swift Compiler - Language" to "C++ / Objective-C++"
+
+## Build
+1. Product -> Build
+
 ## Limitations
 
-* All mesh data is currently leaking; we're still working out some bugs in the ownership semantics between SwiftGodot and Godot's reference counted objects.
 * Missing:
     * Documentation
-    * Skinned meshes ([Skeleton3D](https://docs.godotengine.org/en/stable/classes/class_skeleton3d.html))
     * Shaders
     * Particle systems
     * Many PBR material options
-* Lots of unpicked low hanging performance fruit on the tree:
-    * Some modifications to Godot proper reserving us a bit somewhere for "node position/rotation/scale" changed might mean that static objects have almost no performance cost.
 * Any native GDExtensions you want to use (godot-jolt, etc.) need to be compiled for visionOS.
 
 ## Roadmap
@@ -46,11 +65,11 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 * Live reload of Godot scene if saved from the editor 🤩
     * HTTP server serving the PCK file? Or simply the directory? Investigate how easy it would be to add (or use an existing) network layer to the Godot filesystem stuff.
 * ~~Audio sound effects via AudioStreamPlayer3D~~
-* Undo ugly InterThread/locking stuff now that we’re running on the main thread
+* ~~Undo ugly InterThread/locking stuff now that we’re running on the main thread~~
 * A nice way to substitute RealityKit authored stuff for Godot nodes; i.e., maybe you have a particle system you want to use based on some flag/layer/node name, etc.
 * More (prettier!) example scenes!
 * Map MultiMeshInstance3D to instanced RealityKit entities?
-* Skinned meshes
+* ~~Skinned meshes~~
 * Use SwiftUI attachments in Godot scene?
 * Loading scenes from within Godot should work seamlessly
 * Support updating Godot project for released apps without an app store review cycle
@@ -61,4 +80,5 @@ Check out the amazing [SwiftGodot](https://migueldeicaza.github.io/SwiftGodotDoc
 
 * Use the upcoming Godot Metal port and share textures/buffers directly when possible. Find out what kinds of shader translation are "easy" in this shiny new Metal world
 * A build system so you can make a super thin version of Godot without any of the modules you don't need, shrinking the final binary size.
-* Investigate creating a [Godot "server"](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) so we could do one per-frame memcopy for position/rotation/translation of Nodes which have moved.
+* ~~Investigate creating a [Godot "server"](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) so we could do one per-frame memcopy for position/rotation/translation of Nodes which have moved.~~ (A version of this is implemented via a new [SceneTree signal](https://github.com/multijam/godot/commit/f09eb5198f52c3503eda82fc2986ab0e36a4ad17))
+

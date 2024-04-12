@@ -5,6 +5,15 @@ import libgodot
 import SwiftGodot
 import SwiftGodotKit
 
+extension PackedByteArray {
+    /// Returns a new Data object with a copy of the data contained by this PackedByteArray
+    public func asDataNoCopy() -> Data? {
+        withUnsafeMutableAccessToData { ptr, count in 
+            Data(bytesNoCopy: ptr, count: count, deallocator: .none)
+        }
+    }
+}
+
 extension String {
     func removingStringPrefix(_ prefix: String) -> String {
         if starts(with: prefix) {
@@ -54,12 +63,6 @@ class GodotSwiftBridge: Node3D {
     
     var onAudioStreamPlayed: ((_ playInfo: AudioStreamPlay) -> ())? = nil
     
-    static func runLater(cb: @escaping () -> Void) {
-        lock.withLock {
-            cbs.append(cb)
-        }
-    }
-    
     @Callable func onAudioStreamPlayerPlayed(audioStreamPlayer3D: AudioStreamPlayer3D) {
         onPlayOrPreload(audioStreamPlayer3D: audioStreamPlayer3D, prepareOnly: false)
     }
@@ -69,7 +72,6 @@ class GodotSwiftBridge: Node3D {
     }
     
     private func onPlayOrPreload(audioStreamPlayer3D: AudioStreamPlayer3D, prepareOnly: Bool) {
-            
         if let resourcePath = audioStreamPlayer3D.stream?.resourcePath {
             let godotInstanceID = audioStreamPlayer3D.getInstanceId()
             onAudioStreamPlayed?(.init(godotInstanceID: Int64(godotInstanceID),
@@ -77,32 +79,6 @@ class GodotSwiftBridge: Node3D {
                                        volumeDb: audioStreamPlayer3D.volumeDb,
                                        prepareOnly: prepareOnly))
         }
-    }
-    
-    private static func runCbs() {
-        let callbacks = lock.withLock {
-            let callbacks = cbs
-            cbs.removeAll()
-            return callbacks
-        }
-        
-        for cb in callbacks {
-            cb()
-        }
-    }
-    
-    static var lock = NSLock()
-    static var cbs: [() -> Void] = []
-
-    override func _input (event: InputEvent) {
-        guard event.isPressed () && !event.isEcho () else { return }
-        print ("SpinningCube: event: isPressed ")
-    }
-    
-    public override func _process(delta: Double) {
-        rotateY(angle: delta)
-        
-        Self.runCbs()
     }
 }
 
