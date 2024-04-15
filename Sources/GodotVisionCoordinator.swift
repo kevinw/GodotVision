@@ -383,8 +383,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private func _createRealityKitEntityForNewNode(_ node: SwiftGodot.Node) -> Entity {
         // Inspect the Godot node to see if we have a mesh, materials, and a skeleton.
         var materials: [RealityKit.Material]? = nil
-        var skeleton3D: SwiftGodot.Skeleton3D? = nil
+        
         var mesh: SwiftGodot.Mesh? = nil
+        var skeleton3D: SwiftGodot.Skeleton3D? = nil
+        var isCsgMesh: Bool = false
+        
         if let meshInstance3D = node as? MeshInstance3D {
             skeleton3D = meshInstance3D.skeleton.isEmpty() ? nil : (meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D)
             mesh = meshInstance3D.mesh
@@ -396,11 +399,18 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     }
                 }
             }
+        } else if let csgShape = node as? CSGShape3D, csgShape.isRootShape() {
+            let transformAndMesh = csgShape.getMeshes()
+            if transformAndMesh.count >= 2 {
+                isCsgMesh = true
+                mesh = transformAndMesh[1].asObject(SwiftGodot.Mesh.self)
+                materials = []
+            }
         }
         
         // Construct a ModelEntity with our mesh data if we have one.
         var entity: Entity
-        if let mesh, let node3D = node as? Node3D, let mesh = createRealityKitMesh(node: node3D, godotMesh: mesh, godotSkeleton: skeleton3D) {
+        if let mesh, let node3D = node as? Node3D, let mesh = createRealityKitMesh(node: node3D, meshCreationInfo: .init(godotMesh: mesh, godotSkeleton: skeleton3D, isCsgMesh: isCsgMesh)) {
             let usedMaterials = (materials?.count ?? 0 == 0) ? [SimpleMaterial(color: .white, isMetallic: false)] : materials!
             entity = ModelEntity(mesh: mesh, materials: usedMaterials)
         } else {

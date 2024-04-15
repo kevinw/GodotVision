@@ -137,27 +137,29 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
     }
 }
 
-struct MeshKey: Hashable {
+struct MeshCreationInfo: Hashable {
     var godotMesh: SwiftGodot.Mesh
     var godotSkeleton: SwiftGodot.Skeleton3D? = nil
+    var isCsgMesh: Bool = false
 }
 
-private var meshCache: [MeshKey: MeshResource] = [:] // TODO @Leak
+private var meshCache: [MeshCreationInfo: MeshResource] = [:] // TODO @Leak
 
-func createRealityKitMesh(node: Node3D, godotMesh: SwiftGodot.Mesh, godotSkeleton: SwiftGodot.Skeleton3D? = nil) -> MeshResource? {
-    let key = MeshKey(godotMesh: godotMesh, godotSkeleton: godotSkeleton)
-    if let meshResource = meshCache[key] {
+
+
+func createRealityKitMesh(node: Node3D, meshCreationInfo: MeshCreationInfo) -> MeshResource? {
+    if let meshResource = meshCache[meshCreationInfo] {
         return meshResource
     }
     
     var meshResource: MeshResource? = nil
     doLoggingErrors {
-        let meshContents = try meshContents(node: node, fromGodotMesh: godotMesh, skeleton: godotSkeleton, verbose: false)
+        let meshContents = try meshContents(node: node, meshCreationInfo: meshCreationInfo, verbose: false)
         meshResource = try MeshResource.generate(from: meshContents)
     }
 
     if let meshResource {
-        meshCache[key] = meshResource
+        meshCache[meshCreationInfo] = meshResource
     }
     
     return meshResource
@@ -209,10 +211,14 @@ func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.S
 }
 
 private func meshContents(node: Node3D,
-                          fromGodotMesh mesh: SwiftGodot.Mesh,
-                          skeleton: SwiftGodot.Skeleton3D? = nil,
+                          meshCreationInfo: MeshCreationInfo,
                           verbose: Bool = false) throws -> MeshResource.Contents
 {
+    
+    let mesh = meshCreationInfo.godotMesh
+    let skeleton = meshCreationInfo.godotSkeleton
+    let isCsgMesh = meshCreationInfo.isCsgMesh
+
     if mesh.getSurfaceCount() == 0 {
         return MeshResource.Contents()
     }
@@ -272,18 +278,22 @@ private func meshContents(node: Node3D,
         var primitivesCount: Int? = nil
         switch indicesVariant.gtype {
         case .nil:
-            ()
-            // TODO: check to make sure RealityKit can render meshes without index buffers (it should be able to!)...
-            // print("mesh has no indices: \(mesh)")
-            // meshPart.triangleIndices = MeshBuffers.TriangleIndices(.init(0..<UInt32(verticesArray.count)))
+            if isCsgMesh {
+                // Hack for CGS meshes whose vertices come in reverse winding order (for some reason?)
+                // Note they have no index buffer.
+                let indicesArray: [UInt32] = (0..<UInt32(verticesArray.count)).reversed()
+                meshPart.triangleIndices = MeshBuffers.TriangleIndices(indicesArray)
+            }
         case .packedInt32Array:
             guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
-            let indicesArray = reverseWindingOrder(ofIndexBuffer: indices.map { UInt32($0) })
+            let indicesArray: [UInt32]
+            indicesArray = reverseWindingOrderOfIndexBuffer(indices.map { UInt32($0) })
             primitivesCount = indicesArray.count
             meshPart.triangleIndices = MeshBuffers.TriangleIndices(indicesArray)
         default:
             logError("ARRAY_INDEX was unexpected Variant type \(indicesVariant.gtype)")
         }
+        
 
         //
         // normals
@@ -408,7 +418,7 @@ private func meshContents(node: Node3D,
 
 // private var MEMORY_LEAK_TO_PREVENT_REFCOUNT_CRASH: [GArray] = []
 
-private func reverseWindingOrder<T>(ofIndexBuffer buffer: [T]) -> [T]  where T: BinaryInteger {
+private func reverseWindingOrderOfIndexBuffer<T>(_ buffer: [T]) -> [T]  where T: BinaryInteger {
     var result: [T] = Array.init(repeating: T(), count: buffer.count)
     
     assert(buffer.count % 3 == 0)
