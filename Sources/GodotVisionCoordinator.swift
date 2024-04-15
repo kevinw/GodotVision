@@ -420,7 +420,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         // Setup a node to be tappable with the `InputTargetComponent()` if necessary..
         // TODO: we could have more fine-graned input ray pickable shapes based on the Godot collision shapes. Currently we just put a box around the visual bounds.
         let inputRayPickable: Bool = (node as? CollisionObject3D)?.inputRayPickable ?? false
-        if inputRayPickable != nil {
+        if inputRayPickable {
             DispatchQueue.main.async {
                 let bounds = entity.visualBounds(relativeTo: entity.parent)
                 let collisionShape: RealityKit.ShapeResource = .generateBox(size: bounds.extents)
