@@ -193,13 +193,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             t.translation = .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z)
             t.rotation = nodeData.rot
             t.scale = .init(nodeData.scl.x, nodeData.scl.y, nodeData.scl.z)
-            
             entity.transform = t
-            //transformSetCount += 1
-            
-            // print(entity.id, t.translation)
-            
-            // Update isEnabled
             entity.isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
         }
     }
@@ -450,6 +444,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         // Finally, initialize the position/rotation/scale.
         if let node3D = node as? Node3D {
             entity.transform = RealityKit.Transform(node3D.transform)
+            entity.isEnabled = node3D.visible
+
         }
         
         return entity
