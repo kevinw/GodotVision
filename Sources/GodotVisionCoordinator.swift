@@ -53,13 +53,27 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private var projectContext: GodotProjectContext = .init()
     
+    // explanation in comment below
+    var volumeRatioDebouncer = Debouncer(delay: 2)
     
+    // we expect changeScaleIfVolumeSizeChanged to be called...
+    // - from didReceiveGodotVolumeCamera, when Volume Camera node is first recognized
+    // - from SwiftUI RealityView update method in ContentView
+    //     - VisionOS seems to size the volume in a few steps
+    //     - when a user changes the zoom level in system settings while the app is open
+    // we debounce ratio mismatch error log so we only check the ratio when the visionOS volume size settles
+    // one other note, visionOS clamps volume size in all dimensions to 0.2352 to 1.9852
     public func changeScaleIfVolumeSizeChanged(_ volumeSize: simd_double3) {
         if volumeSize != realityKitVolumeSize {
             realityKitVolumeSize = volumeSize
             let ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
             godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
-            self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
+            godotEntitiesParent.scale = .one * godotToRealityKitRatio
+            volumeRatioDebouncer.debounce {
+                if !(ratio.x.isApproximatelyEqualTo(ratio.y) && ratio.y.isApproximatelyEqualTo(ratio.z)) {
+                    logError("expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
+                }
+            }
         }
     }
     
@@ -249,14 +263,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let godotVolumeBoxSize = simd_float3(boxShape3D.size)
         volumeCameraBoxSize = godotVolumeBoxSize
         
-        let ratio = simd_float3(realityKitVolumeSize) / godotVolumeBoxSize
-        
-        // Check that the boxes (realtikit and godot) have the same "shape"
-        if !(ratio.x.isApproximatelyEqualTo(ratio.y) && ratio.y.isApproximatelyEqualTo(ratio.z)) {
-            logError("expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
-        }
-        godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
-        self.godotEntitiesParent.scale = .one * godotToRealityKitRatio
+        changeScaleIfVolumeSizeChanged(realityKitVolumeSize)
     }
     
     func resetRealityKit() {
