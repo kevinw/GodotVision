@@ -47,6 +47,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
     private var volumeCameraPosition: simd_float3 = .zero
+    private var volumeCameraScale: simd_float3 = .one
+    private var volumeCameraRotation: simd_float3 = .zero
     private var volumeCameraBoxSize: simd_float3 = .one
     private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
     private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
@@ -281,6 +283,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             // should do rotation too, but idk how to go from godot rotation to RK 'orientation'
             // ie: physicsEntitiesParent.orientation = some_function(volumeCamera.rotation)
             // use scale here too
+            volumeCameraScale = simd_float3(.one / volumeCamera.scale)
+//            volumeCameraRotation = simd_float3(volumeCamera.globalRotation) * -1 // this doesn't work when the camera gets its transfrom from parent
             volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -1 * godotToRealityKitRatio
         }
     }
@@ -590,6 +594,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
         }
         
+        godotEntitiesParent.scale = volumeCameraScale * godotToRealityKitRatio
+        godotEntitiesParent.transform.rotation = simd_quatf(.fromEuler(Vector3(volumeCameraRotation)))
         godotEntitiesParent.position = volumeCameraPosition
     }
     
