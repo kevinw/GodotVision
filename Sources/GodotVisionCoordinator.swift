@@ -128,10 +128,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     private func receivedSceneTree(sceneTree: SwiftGodot.SceneTree) {
-        print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
-        print(sceneTree.currentScene?.sceneFilePath)
-        
-        // the packfile load happens after this callback. so as a hack we use nodeAdded for now to notice a specially named root node coming into being.
+        // print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
+        // print(sceneTree.currentScene?.sceneFilePath)
         
         nodeTransformsChangedToken = sceneTree.nodeTransformsChanged.connect(onNodeTransformsChanged)
         nodeAddedToken             = sceneTree.nodeAdded.connect(onNodeAdded)
@@ -140,7 +138,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         self.sceneTree = sceneTree
         
-        #if false
+        #if false // show the nodes in the RealityKit hierarchy
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             print("RK HIEARCHY-------")
             printEntityTree(self.godotEntitiesParent)
@@ -460,7 +458,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private func isSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) -> Bool {
         if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
-            if let meshInstance3D = node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
+            if let meshInstance3D = node as? MeshInstance3D, let _ = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
                 return true
             }
         }
