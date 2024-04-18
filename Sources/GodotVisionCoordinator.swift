@@ -152,11 +152,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     private func onNodeTransformsChanged(_ packedByteArray: PackedByteArray) {
-        
         guard let data = packedByteArray.asDataNoCopy() else {
             return
         }
-        
         
         struct NodeData {
             enum Flags: UInt32 {
@@ -176,7 +174,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             var pad0: Float
         }
 
-        
         data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
             ptr.withMemoryRebound(to: NodeData.self) { nodeDatas in
                 _receivedNodeDatas(nodeDatas)
