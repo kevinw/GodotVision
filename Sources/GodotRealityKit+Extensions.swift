@@ -20,6 +20,14 @@ func uiColor(forGodotColor c: SwiftGodot.Color) -> UIColor {
     .init(red: .init(c.red), green: .init(c.green), blue: .init(c.blue), alpha: .init(c.alpha))
 }
 
+extension SwiftGodot.Transform3D {
+    init(_ rkTransform: RealityKit.Transform) {
+        self.init(basis: .init(from: Quaternion(rkTransform.rotation)).scaled(scale: .init(rkTransform.scale)),
+                  origin: .init(rkTransform.translation))
+        // TODO great place for some unit tests, trying converting matrices back and forth
+    }
+}
+
 extension RealityKit.Transform {
     init(_ godotTransform: SwiftGodot.Transform3D) {
         self.init(scale: .init(godotTransform.basis.getScale()),
@@ -81,6 +89,10 @@ extension SwiftGodot.Quaternion {
 extension simd_quatf {
     init(_ godotQuat: SwiftGodot.Quaternion) {
         self.init(ix: godotQuat.x, iy: godotQuat.y, iz: godotQuat.z, r: godotQuat.w)
+    }
+    
+    init(_ q: simd_quatd) {
+        self.init(ix: Float(q.imag.x), iy: Float(q.imag.y), iz: Float(q.imag.z), r: Float(q.real))
     }
 }
 

@@ -416,7 +416,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         // TODO: we could have more fine-graned input ray pickable shapes based on the Godot collision shapes. Currently we just put a box around the visual bounds.
         let inputRayPickable: Bool = (node as? CollisionObject3D)?.inputRayPickable ?? false
         if inputRayPickable {
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { // TODO: this doesn't need to be dispatched unitl later anymore.
                 let bounds = entity.visualBounds(relativeTo: entity.parent)
                 let collisionShape: RealityKit.ShapeResource = .generateBox(size: bounds.extents)
                 var collision = CollisionComponent(shapes: [collisionShape])
@@ -436,7 +436,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if let node3D = node as? Node3D {
             entity.transform = RealityKit.Transform(node3D.transform)
             entity.isEnabled = node3D.visible
-
         }
         
         return entity
@@ -497,6 +496,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             // we notice a specially named node for the "bounds"
             if node.name == VISION_VOLUME_CAMERA_GODOT_NODE_NAME, let node3D = node as? Node3D {
                 didReceiveGodotVolumeCamera(node3D)
+            }
+            
+            if node.hasSignal("drag") {
+                entity.components.set(GodotVisionDraggable())
             }
             
             if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
@@ -603,6 +606,52 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
     func receivedDrag(_ value: EntityTargetValue<DragGesture.Value>) {
+        let entity = value.entity
+        
+        var godotWorldSpaceTransform: Transform? = nil
+        if var dragCtx = entity.components[GodotVisionDraggable.self] {
+            defer { entity.components.set(dragCtx) }
+            
+            var origPos = dragCtx.originalPosition
+            if origPos == nil {
+                origPos = entity.position(relativeTo: nil)
+                dragCtx.originalPosition = origPos
+            }
+            
+            var origRotation = dragCtx.originalRotation
+            if origRotation == nil {
+                origRotation = Rotation3D(entity.orientation(relativeTo: nil))
+                dragCtx.originalRotation = origRotation
+            }
+            
+            // Rotation
+            var newOrientation = entity.orientation(relativeTo: nil)
+            let localToScene = value.transform(from: .local, to: .scene) // an AffineTransform3D which maps .local to .scene
+            if let startInputDevicePose3D = value.startInputDevicePose3D, 
+               let inputDevicePose3D = value.inputDevicePose3D,
+               let startRotation = (localToScene * AffineTransform3D(pose: startInputDevicePose3D)).rotation,
+               let currentRotation = (localToScene * AffineTransform3D(pose: inputDevicePose3D)).rotation 
+            {
+                // "add" the original pose and the delta of the (current pose - start pose)
+                newOrientation = .init((currentRotation * startRotation.inverse) * origRotation!)
+            }
+                
+            // Position
+            // Note that we ignore the position of the pose3D objects above--they are actually more noisy than the smoothed out version we get in
+            // the gesture value.
+            let startPos = value.convert(value.startLocation3D, from: .local, to: .scene)
+            let currentPos = value.convert(value.location3D, from: .local, to: .scene)
+            let newPosition = (currentPos - startPos) + origPos!
+            
+            let rkWorldSpaceTransform = Transform(scale: entity.scale(relativeTo: nil), rotation: newOrientation, translation: newPosition)
+            godotWorldSpaceTransform = godotEntitiesParent.convert(transform: rkWorldSpaceTransform, from: nil)
+            
+            if dragCtx.moveInRealityKit {
+                entity.setPosition(newPosition, relativeTo: nil)
+                entity.setOrientation(newOrientation, relativeTo: nil)
+            }
+        }
+        
         guard let obj = self.godotInstanceFromRealityKitEntityID(value.entity.id) else { return }
         if !obj.hasSignal("drag") {
             return
@@ -610,6 +659,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         // pass a dictionary of values to the drag signal
         let dict: GDictionary = .init()
+        if let godotWorldSpaceTransform {
+            dict["global_transform"] = Variant(Transform3D(godotWorldSpaceTransform))
+        }
         dict["start_location"] = Variant(rkGestureLocationToGodotWorldPosition(value, value.startLocation3D))
         dict["location"] = Variant(rkGestureLocationToGodotWorldPosition(value, value.location3D))
         dict["predicted_end_location"] = Variant(rkGestureLocationToGodotWorldPosition(value, value.predictedEndLocation3D))
@@ -625,6 +677,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     /// A visionOS drag has ended. We emit a signal to inform Godot land.
     func receivedDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
+        value.entity.components[GodotVisionDraggable.self]?.reset()
         guard let obj = godotInstanceFromRealityKitEntityID(value.entity.id) else { return }
         if obj.hasSignal("drag_ended") {
             obj.emitSignal("drag_ended")
@@ -690,3 +743,16 @@ class GodotProjectContext {
     }
 }
 
+
+
+struct GodotVisionDraggable: Component {
+    var moveInRealityKit: Bool = false
+    
+    var originalPosition: simd_float3? = nil
+    var originalRotation: Rotation3D? = nil
+    
+    mutating func reset() {
+        originalPosition = nil
+        originalRotation = nil
+    }
+}

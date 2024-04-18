@@ -18,7 +18,7 @@ public struct GodotVisionRealityViewModifier: ViewModifier {
                     coordinator.receivedTap(event: event)
                 }
             })
-            .gesture(DragGesture().targetedToAnyEntity().onChanged({value in
+            .gesture(DragGesture(minimumDistance: 0.1, coordinateSpace: .local).targetedToAnyEntity().onChanged({ value in
                 if value.entity.components.has(InputTargetComponent.self) {
                     coordinator.receivedDrag(value)
                 }
