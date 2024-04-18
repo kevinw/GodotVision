@@ -33,11 +33,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var godotInstanceIDToEntity: [Int64: Entity] = [:]
     
     private var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
+    private var godotEntitiesScale = Entity() /// Applies a global scale to the godot scene based on the volume size and the godot camera volume.
+    
     private var eventSubscription: EventSubscription? = nil
     private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
     private var nodeAddedToken: SwiftGodot.Object? = nil
     private var nodeRemovedToken: SwiftGodot.Object? = nil
-    private var processFrameToken: SwiftGodot.Object? = nil
     private var receivedRootNode = false
     private var resourceCache: ResourceCache = .init()
     private var sceneTree: SceneTree? = nil
@@ -46,15 +47,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var _audioResources: [String: AudioFileResource] = [:]
     
     private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
-    private var volumeCameraPosition: simd_float3 = .zero
     private var volumeCameraBoxSize: simd_float3 = .one
     private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
     private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
     
     private var projectContext: GodotProjectContext = .init()
-    
+    private var skeletonEntities: Set<Entity> = .init() /// Entities we need to apply bone transform updates to every frame.
+
     // explanation in comment below
-    var volumeRatioDebouncer = Debouncer(delay: 2)
+    let volumeRatioDebouncer = Debouncer(delay: 2)
     
     // we expect changeScaleIfVolumeSizeChanged to be called...
     // - from didReceiveGodotVolumeCamera, when Volume Camera node is first recognized
@@ -68,7 +69,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             realityKitVolumeSize = volumeSize
             let ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
             godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
-            godotEntitiesParent.scale = .one * godotToRealityKitRatio
             volumeRatioDebouncer.debounce {
                 if !(ratio.x.isApproximatelyEqualTo(ratio.y) && ratio.y.isApproximatelyEqualTo(ratio.z)) {
                     logError("expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
@@ -134,7 +134,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         nodeTransformsChangedToken = sceneTree.nodeTransformsChanged.connect(onNodeTransformsChanged)
         nodeAddedToken             = sceneTree.nodeAdded.connect(onNodeAdded)
         nodeRemovedToken           = sceneTree.nodeRemoved.connect(onNodeRemoved)
-        processFrameToken          = sceneTree.processFrame.connect(onGodotFrame)
         
         self.sceneTree = sceneTree
         
@@ -151,11 +150,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     private func onNodeTransformsChanged(_ packedByteArray: PackedByteArray) {
-        
         guard let data = packedByteArray.asDataNoCopy() else {
             return
         }
-        
         
         struct NodeData {
             enum Flags: UInt32 {
@@ -175,7 +172,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             var pad0: Float
         }
 
-        
         data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
             ptr.withMemoryRebound(to: NodeData.self) { nodeDatas in
                 _receivedNodeDatas(nodeDatas)
@@ -274,15 +270,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
-    private func onGodotFrame() {
-        if let volumeCamera {
-            // should do rotation too, but idk how to go from godot rotation to RK 'orientation'
-            // ie: physicsEntitiesParent.orientation = some_function(volumeCamera.rotation)
-            // use scale here too
-            volumeCameraPosition = simd_float3(volumeCamera.globalPosition) * -1 * godotToRealityKitRatio
-        }
-    }
-    
     private static var didInitGodot = false
     
     public func setupRealityKitScene(_ content: RealityViewContent, volumeSize: simd_double3, projectFileDir: String? = nil) -> Entity {
@@ -328,8 +315,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         // Create a root Entity to store all our mirrored Godot nodes-turned-RealityKit entities.
         godotEntitiesParent.name = "GODOTRK_ROOT"
+        godotEntitiesScale.addChild(godotEntitiesParent)
         
-        content.add(godotEntitiesParent)
+        // A root of that entity will also apply scale.
+        godotEntitiesScale.name = "GODOTRK_SCALE"
+        content.add(godotEntitiesScale)
         
         return godotEntitiesParent
     }
@@ -355,10 +345,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             if let nodeRemovedToken {
                 sceneTree.nodeRemoved.disconnect(nodeRemovedToken)
                 self.nodeRemovedToken = nil
-            }
-            if let processFrameToken {
-                sceneTree.processFrame.disconnect(processFrameToken)
-                self.processFrameToken = nil
             }
             self.sceneTree = nil
         }
@@ -490,8 +476,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
-    private var skeletonEntities: Set<Entity> = .init()
-    
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         if stepGodotFrame() {
             print("GODOT HAS QUIT")
@@ -588,7 +572,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
         }
         
-        godotEntitiesParent.position = volumeCameraPosition
+        if let volumeCamera {
+            // Movement and rotation in the Godot camera (or our GodotVision camera volume node) get reflected
+            // in our scene by applying the inverse transform of the camera to the parent Entity of Godot objects.
+            godotEntitiesParent.transform = .init(volumeCamera.globalTransform.affineInverse())
+            godotEntitiesScale.scale = .one * godotToRealityKitRatio
+        }
     }
     
     // TODO: remove this function and use the `GodotNode` Component to link Entity -> Node3D
