@@ -407,9 +407,13 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         godotInstanceIDToEntity[instanceID] = entity
         godotEntitiesParent.addChild(entity)
         
-        // Set grounding shadows on entities with a mesh
-        if mesh != nil {
+        // Set grounding shadows on entities with a mesh (unless a metadata entry for 'grounding_shadow' exists and is false
+        if mesh != nil && node.getMetaBool("grounding_shadow", defaultValue: true) {
             entity.components.set(GroundingShadowComponent(castsShadow: true))
+        } else {
+            if mesh != nil {
+                print("skipping grounding shadow for", node)
+            }
         }
         
         // Setup a node to be tappable with the `InputTargetComponent()` if necessary..
@@ -424,8 +428,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 entity.components.set(InputTargetComponent())
                 
                 // If there's a metadata entry for 'hover_effect' with the boolean value of true, we add a RealityKit HoverEffectComponent.
-                let hoverEffect = Bool(node.getMeta(name: "hover_effect", default: Variant(false))) ?? false
-                if hoverEffect {
+                if node.getMetaBool("hover_effect", defaultValue: false) {
                     entity.components.set(HoverEffectComponent())
                 }
                 entity.components.set(collision)

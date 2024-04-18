@@ -5,6 +5,12 @@ import libgodot
 import SwiftGodot
 import SwiftGodotKit
 
+extension Node {
+    func getMetaBool(_ name: String, defaultValue: Bool) -> Bool {
+        Bool(getMeta(name: StringName(name), default: Variant(defaultValue))) ?? defaultValue
+    }
+}
+
 extension PackedByteArray {
     /// Returns a new Data object with a copy of the data contained by this PackedByteArray
     public func asDataNoCopy() -> Data? {
