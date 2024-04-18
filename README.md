@@ -1,6 +1,6 @@
 # GodotVision
 
-### Questions? Join the [GodotVision Discord](https://discord.gg/WYxyWMAM)
+### Questions? Join the [GodotVision Discord](https://discord.gg/XvB4dwGUtF)
 
 Godot headless on visionOS, rendered with RealityKit, so you can create shared-space visionOS experiences from Godot.
 
