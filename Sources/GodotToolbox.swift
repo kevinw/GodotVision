@@ -5,7 +5,7 @@ import libgodot
 import SwiftGodot
 import SwiftGodotKit
 
-extension Node {
+extension Object {
     func getMetaBool(_ name: String, defaultValue: Bool) -> Bool {
         Bool(getMeta(name: StringName(name), default: Variant(defaultValue))) ?? defaultValue
     }

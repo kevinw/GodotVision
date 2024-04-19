@@ -47,7 +47,7 @@ class ResourceEntry<G, R> where G: SwiftGodot.Resource {
     private func onChanged() {
         // TODO: haven't actually verified this works...
         
-        print("\(Self.self) CHANGED", String(describing: godotResource))
+        print("RESOURCE CHANGED \(Self.self)", String(describing: godotResource))
         DispatchQueue.main.async {
             self.rkResource = nil
         }
@@ -143,26 +143,46 @@ struct MeshCreationInfo: Hashable {
     var isCsgMesh: Bool = false
 }
 
-private var meshCache: [MeshCreationInfo: MeshResource] = [:] // TODO @Leak
+class MeshEntry {
+    init(meshResource: MeshResource) {
+        self.meshResource = meshResource
+    }
+    
+    let meshResource: MeshResource
+    var entities: Set<ModelEntity> = .init()
+    
+    var changedListeners: [() -> Void] = []
+}
 
+private var meshCache: [MeshCreationInfo: MeshEntry] = [:] // TODO @Leak
 
-
-func createRealityKitMesh(node: Node3D, meshCreationInfo: MeshCreationInfo) -> MeshResource? {
-    if let meshResource = meshCache[meshCreationInfo] {
-        return meshResource
+func createRealityKitMesh(debugName: String, meshCreationInfo: MeshCreationInfo, onResourceChange: @escaping (MeshEntry) -> Void) -> MeshEntry? {
+    if let meshEntry = meshCache[meshCreationInfo] {
+        return meshEntry
     }
     
     var meshResource: MeshResource? = nil
     doLoggingErrors {
-        let meshContents = try meshContents(node: node, meshCreationInfo: meshCreationInfo, verbose: false)
+        let meshContents = try meshContents(debugName: debugName, meshCreationInfo: meshCreationInfo, verbose: false)
         meshResource = try MeshResource.generate(from: meshContents)
     }
 
     if let meshResource {
-        meshCache[meshCreationInfo] = meshResource
+        let meshEntry = MeshEntry(meshResource: meshResource)
+
+        if !meshCreationInfo.godotMesh.getMetaBool("_didRegisterChanged", defaultValue: false) {
+            meshCreationInfo.godotMesh.setMeta(name: "_didRegisterChanged", value: Variant(true))
+            meshCreationInfo.godotMesh.changed.connect {
+                meshCache.removeValue(forKey: meshCreationInfo)
+                onResourceChange(meshEntry)
+            }
+        }
+
+        meshCache[meshCreationInfo] = meshEntry
+        return meshEntry
     }
     
-    return meshResource
+    return nil
 }
     
 private func getInverseBindPoseMatrix(skeleton: Skeleton3D, boneIdx: Int32) -> simd_float4x4 {
@@ -210,7 +230,7 @@ func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.S
     )
 }
 
-private func meshContents(node: Node3D,
+private func meshContents(debugName: String,
                           meshCreationInfo: MeshCreationInfo,
                           verbose: Bool = false) throws -> MeshResource.Contents
 {
@@ -234,7 +254,7 @@ private func meshContents(node: Node3D,
     }
     
     if verbose {
-        print("--------\nmeshContents for node: \(node.name)")
+        print("--------\nmeshContents for node: \(debugName)")
     }
     
     var newContents = MeshResource.Contents()
@@ -409,7 +429,7 @@ private func meshContents(node: Node3D,
     }
     
     var modelCollection = MeshModelCollection()
-    modelCollection.insert(MeshResource.Model(id: "model_\(node.name)", parts: meshParts))
+    modelCollection.insert(MeshResource.Model(id: "model_\(debugName)", parts: meshParts))
     newContents.models = modelCollection
     
     return newContents
