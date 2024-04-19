@@ -443,17 +443,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         return entity
     }
-    
-    private func isSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) -> Bool {
-        if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
-            if let meshInstance3D = node as? MeshInstance3D, let _ = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
-                return true
-            }
-        }
-        
-        return false
-    }
-    
+
     private func updateSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) {
         // TODO: we might be able to register for an event when the bone poses change, and respond to that, instead of doing a per frame check. @Perf
         if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
@@ -759,3 +749,14 @@ struct GodotVisionDraggable: Component {
         originalRotation = nil
     }
 }
+    
+private func isSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) -> Bool {
+    if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
+        if let meshInstance3D = node as? MeshInstance3D, let _ = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
+            return true
+        }
+    }
+    
+    return false
+}
+    
