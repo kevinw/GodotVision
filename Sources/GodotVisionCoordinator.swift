@@ -376,11 +376,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private func _updateModelEntityMesh(_ node: Node, _ existingEntity: ModelEntity?) -> ModelEntity? {
         // Inspect the Godot node to see if we have a mesh, materials, and a skeleton.
-        var materials: [RealityKit.Material]? = nil
+        var materials: [SwiftGodot.Material]? = nil
         
         var mesh: SwiftGodot.Mesh? = nil
         var skeleton3D: SwiftGodot.Skeleton3D? = nil
-        var isCsgMesh: Bool = false
+        var flipFacesIfNoIndexBuffer: Bool = false
         
         if let meshInstance3D = node as? MeshInstance3D {
             //
@@ -389,12 +389,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             skeleton3D = meshInstance3D.skeleton.isEmpty() ? nil : (meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D)
             mesh = meshInstance3D.mesh
             if let mesh {
-                materials = []
-                for i in 0...mesh.getSurfaceCount() - 1 {
-                    if let material = meshInstance3D.getActiveMaterial(surface: i) {
-                        materials?.append(resourceCache.materialEntry(forGodotMaterial: material).getMaterial(resourceCache: resourceCache))
-                    }
-                }
+                materials = (0..<mesh.getSurfaceCount()).compactMap { meshInstance3D.getActiveMaterial(surface: $0) }
             }
         } else if let csgShape = node as? CSGShape3D, csgShape.isRootShape() {
             //
@@ -402,28 +397,34 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             //
             let transformAndMesh = csgShape.getMeshes() // returns [Transform, Mesh]
             if transformAndMesh.count >= 2 {
-                isCsgMesh = true
+                flipFacesIfNoIndexBuffer = true
                 mesh = transformAndMesh[1].asObject(SwiftGodot.Mesh.self)
                 materials = []
+                if let mesh {
+                    materials = (0..<mesh.getSurfaceCount()).compactMap { mesh.surfaceGetMaterial(surfIdx: $0) }
+                }
             }
         }
         
         var entity: ModelEntity? = nil
         if let mesh, let node3D = node as? Node3D {
-            let meshCreationInfo = MeshCreationInfo(godotMesh: mesh, godotSkeleton: skeleton3D, isCsgMesh: isCsgMesh)
-            if let oldMeshEntry = existingEntity?.components[GodotNode.self]?.meshEntry {
-                if let existingEntity {
-                    oldMeshEntry.entities.remove(existingEntity)
-                }
+            let meshCreationInfo = MeshCreationInfo(godotMesh: mesh, godotSkeleton: skeleton3D, flipFacesIfNoIndexBuffer: flipFacesIfNoIndexBuffer)
+            
+            if let existingEntity, let oldMeshEntry = existingEntity.components[GodotNode.self]?.meshEntry {
+                oldMeshEntry.entities.remove(existingEntity)
             }
+            
             if let rkMeshEntry = createRealityKitMesh(debugName: String(node3D.name), meshCreationInfo: meshCreationInfo, onResourceChange: _onMeshResourceChanged) {
-                let usedMaterials = (materials?.count ?? 0 == 0) ? [SimpleMaterial(color: .white, isMetallic: false)] : materials!
+                let rkMaterials = (materials?.count ?? 0 == 0)
+                    ? [SimpleMaterial(color: .white, isMetallic: false)]
+                    : materials!.map { resourceCache.rkMaterial(forGodotMaterial: $0) }
                 if let existingEntity {
-                    existingEntity.model = .init(mesh: rkMeshEntry.meshResource, materials: usedMaterials)
+                    existingEntity.model = .init(mesh: rkMeshEntry.meshResource, materials: rkMaterials)
                     entity = existingEntity
                 } else {
-                    entity = ModelEntity(mesh: rkMeshEntry.meshResource, materials: usedMaterials)
+                    entity = ModelEntity(mesh: rkMeshEntry.meshResource, materials: rkMaterials)
                 }
+                
                 if let entity {
                     rkMeshEntry.entities.insert(entity)
                 }
@@ -533,6 +534,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             
             if node.hasSignal("spatial_drag") {
+                // TODO: check if it's a collision object? warn if not?
                 entity.components.set(GodotVisionDraggable())
             }
             

@@ -37,6 +37,10 @@ class ResourceCache {
     func rkTexture(forGodotTexture godotTexture: SwiftGodot.Texture) -> RealityKit.TextureResource {
         textureEntry(forGodotTexture: godotTexture).getTexture(resourceCache: self)
     }
+    
+    func rkMaterial(forGodotMaterial godotMaterial: SwiftGodot.Material) -> RealityKit.Material {
+        materialEntry(forGodotMaterial: godotMaterial).getMaterial(resourceCache: self)
+    }
 }
 
 class ResourceEntry<G, R> where G: SwiftGodot.Resource {
@@ -140,7 +144,7 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
 struct MeshCreationInfo: Hashable {
     var godotMesh: SwiftGodot.Mesh
     var godotSkeleton: SwiftGodot.Skeleton3D? = nil
-    var isCsgMesh: Bool = false
+    var flipFacesIfNoIndexBuffer: Bool = false
 }
 
 class MeshEntry {
@@ -237,7 +241,6 @@ private func meshContents(debugName: String,
     
     let mesh = meshCreationInfo.godotMesh
     let skeleton = meshCreationInfo.godotSkeleton
-    let isCsgMesh = meshCreationInfo.isCsgMesh
 
     if mesh.getSurfaceCount() == 0 {
         return MeshResource.Contents()
@@ -297,7 +300,7 @@ private func meshContents(debugName: String,
         var primitivesCount: Int? = nil
         switch indicesVariant.gtype {
         case .nil:
-            if isCsgMesh {
+            if meshCreationInfo.flipFacesIfNoIndexBuffer {
                 // Hack for CGS meshes whose vertices come in reverse winding order (for some reason?)
                 // Note they have no index buffer.
                 let indicesArray: [UInt32] = (0..<UInt32(verticesArray.count)).reversed()
