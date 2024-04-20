@@ -637,13 +637,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         return nil
     }
     
-    private func rkGestureLocationToGodotWorldPosition(_ value: EntityTargetValue<DragGesture.Value>, _ point3D: Point3D) -> SwiftGodot.Vector3 {
-        // TODO: this is 100% not actually correct.
-        let sceneLoc = value.convert(point3D, from: .local, to: .scene)
-        let godotLoc = godotEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil) + simd_float3(0, 0, volumeCameraBoxSize.z * 0.5)
-        return .init(godotLoc)
-    }
-    
     /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
     func receivedDrag(_ value: EntityTargetValue<DragGesture.Value>, ended: Bool = false) {
         let entity = value.entity
