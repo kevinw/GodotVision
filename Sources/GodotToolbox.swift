@@ -31,41 +31,11 @@ extension String {
     }
 }
 
-@Godot
-class GodotSwiftBridge: Node3D {
-    static var _instance: GodotSwiftBridge? = nil
-    static var instance: GodotSwiftBridge {
-        if _instance == nil {
-            _instance = .init()
-        }
-        return _instance!
-    }
-    
-    var onAudioStreamPlayed: ((_ playInfo: AudioStreamPlay) -> ())? = nil
-    
-    @Callable func onAudioStreamPlayerPlayed(audioStreamPlayer3D: AudioStreamPlayer3D) {
-        onPlayOrPreload(audioStreamPlayer3D: audioStreamPlayer3D, prepareOnly: false)
-    }
-    
-    @Callable func onAudioStreamPlayerPrepare(audioStreamPlayer3D: AudioStreamPlayer3D) {
-        onPlayOrPreload(audioStreamPlayer3D: audioStreamPlayer3D, prepareOnly: true)
-    }
-    
-    private func onPlayOrPreload(audioStreamPlayer3D: AudioStreamPlayer3D, prepareOnly: Bool) {
-        if let resourcePath = audioStreamPlayer3D.stream?.resourcePath {
-            let godotInstanceID = audioStreamPlayer3D.getInstanceId()
-            onAudioStreamPlayed?(.init(godotInstanceID: Int64(godotInstanceID),
-                                       resourcePath: resourcePath,
-                                       volumeDb: audioStreamPlayer3D.volumeDb,
-                                       prepareOnly: prepareOnly))
-        }
-    }
-}
-
 func initHook(_ level: GDExtension.InitializationLevel) {
     switch level {
     case .scene:
-        SwiftGodot.register(type: GodotSwiftBridge.self)
+        // SwiftGodot.register(type: MyCustomGodotObjectTypeHere.self)
+        ()
     default:
         ()
     }

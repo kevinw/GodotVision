@@ -39,6 +39,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
     private var nodeAddedToken: SwiftGodot.Object? = nil
     private var nodeRemovedToken: SwiftGodot.Object? = nil
+    private var audioStreamPlayerPlaybackToken: SwiftGodot.Object? = nil
     private var receivedRootNode = false
     private var resourceCache: ResourceCache = .init()
     private var sceneTree: SceneTree? = nil
@@ -48,7 +49,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
     private var volumeCameraBoxSize: simd_float3 = .one
-    private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealitKit volume is, in meters, as an application in the user's AR space.
+    private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealityKit volume is, in meters, as an application in the user's AR space.
     private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
     
     private var projectContext: GodotProjectContext = .init()
@@ -93,11 +94,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         self.receivedRootNode = false // we will "regrab" the root node and do init stuff with it again.
         
-        let callbackRunner = GodotSwiftBridge.instance
-        if let parent = callbackRunner.getParent() {
-            parent.removeChild(node: callbackRunner)
-        }
-        
         let result = sceneTree.changeSceneToFile(path: sceneResourcePath)
         if SwiftGodot.GodotError.ok != result {
             logError("changeSceneToFile result was not ok: \(result)")
@@ -131,9 +127,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         // print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
         // print(sceneTree.currentScene?.sceneFilePath)
         
-        nodeTransformsChangedToken = sceneTree.nodeTransformsChanged.connect(onNodeTransformsChanged)
-        nodeAddedToken             = sceneTree.nodeAdded.connect(onNodeAdded)
-        nodeRemovedToken           = sceneTree.nodeRemoved.connect(onNodeRemoved)
+        nodeTransformsChangedToken     = sceneTree.nodeTransformsChanged.connect(onNodeTransformsChanged)
+        nodeAddedToken                 = sceneTree.nodeAdded.connect(onNodeAdded)
+        nodeRemovedToken               = sceneTree.nodeRemoved.connect(onNodeRemoved)
+        audioStreamPlayerPlaybackToken = sceneTree.audioStreamPlayerPlayback.connect(onAudioStreamPlayerPlayback)
         
         self.sceneTree = sceneTree
         
@@ -143,6 +140,23 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             printEntityTree(self.godotEntitiesParent)
         }
         #endif
+    }
+    
+    struct AudioToProcess {
+        var instanceId: Int64
+        var state: Int64
+        var flags: Int64
+        var from_pos: Double
+    }
+    private var audioToProcess: [AudioToProcess] = []
+    
+    // callback for custom signal on SceneTree from GodotVision's libgodot fork which gets called for all AudioStreamPlayer[3D] play/stop
+    private func onAudioStreamPlayerPlayback(obj: SwiftGodot.Object, state: Int64, flags: Int64, from_pos: Double) {
+        // TODO: once we fix the casting of Nodes from signal calls, we don't need audioToProcess at all. but until then, obj as? AudioStreamPlayer3D will always fail from within this method. :SignalsWithNodeArguments
+        audioToProcess.append(.init(instanceId: Int64(obj.getInstanceId()),
+                                    state: state,
+                                    flags: flags,
+                                    from_pos: from_pos))
     }
     
     private func onNodeRemoved(_ node: SwiftGodot.Node) {
@@ -214,20 +228,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private func onNodeAdded(_ node: SwiftGodot.Node) {
         let isRoot = node.getParent() == node.getTree()?.root
         
-        // TODO: Hack to get around the fact that the nodes coming in don't cast properly as their subclass yet. outside of this signal handler they do, so we store the id for later.
+        // TODO: Hack to get around the fact that the nodes coming in don't cast properly as their subclass yet. outside of this signal handler they do, so we store the id for later. :SignalsWithNodeArguments
         nodeIdsForNewlyEnteredNodes.append((Int64(node.getInstanceId()), isRoot))
         
         if isRoot && !receivedRootNode {
             receivedRootNode = true
-            
             resetRealityKit()
-            
-            //print("GOT ROOT NODE, attaching callback runner", node)
-            node.addChild(node: GodotSwiftBridge.instance)
-            GodotSwiftBridge.instance.onAudioStreamPlayed = { [weak self] (playInfo: AudioStreamPlay) -> Void in
-                guard let self else { return }
-                audioStreamPlays.append(playInfo)
-            }
         }
     }
     
@@ -510,6 +516,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
+    
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         if stepGodotFrame() {
             print("GODOT HAS QUIT")
@@ -539,15 +546,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             
             if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
-                if node.hasSignal("on_play") {
-                    let _ = node.connect(signal: "on_play", callable: .init(object: GodotSwiftBridge.instance, method: .init("onAudioStreamPlayerPlayed")))
-                } else {
-                    print("WARNING: You're using AudioStreamPlayer3D, but we couldn't find an 'on_play' signal. Did you use RKAudioStreamPlayer? Remember to call '.play_rk()' to trigger the sound effect as well.")
-                }
-                
                 // See if we need to prepare the audio resource (prevents a hitch on first play).
-                if let autoPrepareResource = Bool(node.get(property: "auto_prepare_resource")), autoPrepareResource {
-                    GodotSwiftBridge.instance.onAudioStreamPlayerPrepare(audioStreamPlayer3D: audioStreamPlayer3D)
+                if audioStreamPlayer3D.getMetaBool("gv.auto_prepare", defaultValue: true) {
+                    if let resourcePath = audioStreamPlayer3D.stream?.resourcePath {
+                        audioStreamPlays.append(.init(godotInstanceID: Int64(audioStreamPlayer3D.getInstanceId()),
+                                                      resourcePath: resourcePath,
+                                                      volumeDb: audioStreamPlayer3D.volumeDb,
+                                                      prepareOnly: true))
+                    }
                 }
             }
             
@@ -562,21 +568,39 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         nodeIdsForNewlyEnteredNodes.removeAll()
 
-        
         var retries: [AudioStreamPlay] = []
-        
-        defer { 
+        defer {
             audioStreamPlays = retries
             godotInstanceIDsRemovedFromTree.removeAll()
         }
         
-        func entity(forGodotInstanceID godotInstanceId: Int64) -> Entity? {
-            return godotInstanceIDToEntity[godotInstanceId]
+        do {
+            let newAudios = audioToProcess
+            audioToProcess.removeAll()
+            enum State: Int64 {
+                case UNKNOWN = 0
+                case PLAY = 1
+                case STOP = 2
+            }
+            
+            for newAudio in newAudios {
+                let node = GD.instanceFromId(instanceId: newAudio.instanceId)
+                if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
+                    if let resourcePath = audioStreamPlayer3D.stream?.resourcePath {
+                        if newAudio.state == State.PLAY.rawValue {
+                            audioStreamPlays.append(.init(godotInstanceID: Int64(audioStreamPlayer3D.getInstanceId()),
+                                                          resourcePath: resourcePath,
+                                                          volumeDb: audioStreamPlayer3D.volumeDb,
+                                                          prepareOnly: false))
+                        }
+                    }
+                }
+            }
         }
         
         // Play any AudioStreamPlayer3D sounds
         for var audioStreamPlay in audioStreamPlays {
-            guard let entity = entity(forGodotInstanceID: audioStreamPlay.godotInstanceID) else {
+            guard let entity = godotInstanceIDToEntity[audioStreamPlay.godotInstanceID] else {
                 audioStreamPlay.retryCount += 1
                 if audioStreamPlay.retryCount < 100 {
                     retries.append(audioStreamPlay) // we may not have seen the instance yet.
@@ -584,8 +608,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 continue
             }
             
-            if let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath)
-            {
+            if let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath) {
                 if audioStreamPlay.prepareOnly {
                     let _ = entity.prepareAudio(audioResource)
                 } else {
@@ -685,7 +708,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let currentPos = value.convert(value.location3D, from: .local, to: .scene)
         let newPosition = (currentPos - startPos) + origPos!
         
-        let scale = entity.scale(relativeTo: nil)
+        let scale = entity.scale(relativeTo: nil) // TODO: test dragging nodes with different scales to make sure this is right
         
         let gdStartGlobalTransform = godotEntitiesParent.convert(transform: .init(scale: scale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil)
         let gdGlobalTransform = godotEntitiesParent.convert(transform: .init(scale: scale, rotation: newOrientation, translation: newPosition), from: nil)
@@ -711,12 +734,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     /// RealityKit has received a SpatialTapGesture in the RealityView
     func receivedTap(event: EntityTargetValue<SpatialTapGesture.Value>) {
         let sceneLoc = event.convert(event.location3D, from: .local, to: .scene)
-        var godotLocation = godotEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil)
-        godotLocation += .init(0, 0, volumeCameraBoxSize.z * 0.5)
+        let godotLocation = godotEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil)
         
         // TODO: hack. this normal is not always right. currently this just pretends everything you tap is a sphere???
         
         let realityKitNormal = normalize(event.entity.position(relativeTo: nil) - sceneLoc)
+        
+        // TODO: need to convert the normal to global or local space?
+        
         let godotNormal = realityKitNormal
         
         guard let obj = self.godotInstanceFromRealityKitEntityID(event.entity.id) else { return }
@@ -728,7 +753,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         godotEvent.doubleClick = false // TODO
         godotEvent.pressed = true
         
-        let position = SwiftGodot.Vector3(godotLocation)
+        let position = SwiftGodot.Vector3(godotLocation) // TODO: check if this should be global or local.
         let normal = SwiftGodot.Vector3(godotNormal)
         let shape_idx = 0
         
