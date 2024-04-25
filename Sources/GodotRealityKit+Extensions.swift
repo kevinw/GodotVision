@@ -139,6 +139,14 @@ extension PackedFloat64Array: InitsFromVariant {}
 extension PackedVector3Array: InitsFromVariant {}
 extension PackedVector2Array: InitsFromVariant {}
 
+func printGodotTree(_ node: Node, indent: String = "") {
+    print(indent, node, node.getInstanceId())
+    let newIndent = "  \(indent)"
+    for child in node.getChildren() {
+        printGodotTree(child, indent: newIndent)
+    }
+
+}
 func printEntityTree(_ rkEntity: RealityKit.Entity, indent: String = "") {
     func ori(_ o: simd_quatf) -> String {
         "(r=\(o.real), image: \(o.imag.x), \(o.imag.y), \(o.imag.z))"
