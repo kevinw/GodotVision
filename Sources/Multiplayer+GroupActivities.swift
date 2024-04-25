@@ -87,9 +87,8 @@ public class ShareModel: ObservableObject {
             log("more than one ShareModel")
         }
         
-        groupStateObserver.$isEligibleForGroupSession.sink { value in
-            log("isEligibleForGroupSession became \(value)")
-            self.isEligibleForGroupSession = value
+        groupStateObserver.$isEligibleForGroupSession.sink { [weak self] value in
+            self?.isEligibleForGroupSession = value
         }.store(in: &subs)
     }
     
@@ -146,7 +145,8 @@ public class ShareModel: ObservableObject {
                 let unreliableMessenger = GroupSessionMessenger(session: session, deliveryMode: .unreliable)
                 self.unreliableMessenger = unreliableMessenger
                 
-                session.$state.sink { sessionState in
+                session.$state.sink { [weak self] sessionState in
+                    guard let self else { return }
                     log("sesssion state \(sessionState)")
                     switch sessionState {
                     case .invalidated(let reason):
@@ -332,7 +332,6 @@ extension ShareModel {
         godotData.node = node
         
         let callable = Callable(onGodotRequestJoin)
-        log("registering for 'join_activity' signal from swift...")
         let godotError = node.connect(signal: join_activity, callable: callable)
         if godotError != .ok {
             logError("Could not connect to \(join_activity) signal on SharePlay node: \(godotError)")
@@ -343,7 +342,6 @@ extension ShareModel {
         
     private func onGodotRequestJoin(args: [Variant]) -> Variant? {
         guard let node = godotData.node else { return nil }
-        log("godot is asking to join")
         automaticallyShareInput = Bool(node.get(property: "automatically_share_input")) ?? false
         maybeJoin()
         return nil
