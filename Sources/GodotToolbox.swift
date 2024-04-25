@@ -14,8 +14,8 @@ extension Object {
 extension PackedByteArray {
     /// Returns a new Data object with a copy of the data contained by this PackedByteArray
     public func asDataNoCopy() -> Data? {
-        withUnsafeMutableAccessToData { ptr, count in 
-            Data(bytesNoCopy: ptr, count: count, deallocator: .none)
+        withUnsafeConstAccessToData { ptr, count in 
+            Data(bytesNoCopy: .init(mutating: ptr), count: count, deallocator: .none)
         }
     }
 }
