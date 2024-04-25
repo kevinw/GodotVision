@@ -35,6 +35,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
     private var godotEntitiesScale = Entity() /// Applies a global scale to the godot scene based on the volume size and the godot camera volume.
     
+    var shareModel = ShareModel()
+    
     private var eventSubscription: EventSubscription? = nil
     private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
     private var nodeAddedToken: SwiftGodot.Object? = nil
@@ -124,6 +126,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     private func receivedSceneTree(sceneTree: SwiftGodot.SceneTree) {
+        // print("receivedSceneTree", sceneTree)
         // print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
         // print(sceneTree.currentScene?.sceneFilePath)
         
@@ -136,8 +139,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         #if false // show the nodes in the RealityKit hierarchy
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            print("RK HIEARCHY-------")
+            print("RK HIERARCHY-------")
             printEntityTree(self.godotEntitiesParent)
+        }
+        #endif
+        
+        #if false // show the nodes in the Godot hierarchy
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            print("GODOT HIERARCHY-----")
+            printGodotTree(sceneTree.root!)
         }
         #endif
     }
@@ -234,6 +244,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if isRoot && !receivedRootNode {
             receivedRootNode = true
             resetRealityKit()
+            if let sceneTree, !shareModel.didSetup, sharePlayEnabled {
+                shareModel.didSetup = true
+                shareModel.setup(sceneTree: sceneTree, onMessageData: onMultiplayerData)
+            }
         }
     }
     
@@ -279,12 +293,21 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private static var didInitGodot = false
     
-    public func setupRealityKitScene(_ content: RealityViewContent, volumeSize: simd_double3, projectFileDir: String? = nil) -> Entity {
+    var sharePlayEnabled: Bool { shareModel.activityIdentifier != nil }
+    
+    public func setupRealityKitScene(_ content: RealityViewContent, 
+                                     volumeSize: simd_double3,
+                                     projectFileDir: String? = nil,
+                                     sharePlayActivityId: String? = nil) -> Entity
+    {
         assert(Thread.current.isMainThread)
         
         projectContext.projectFolderName = projectFileDir ?? DEFAULT_PROJECT_FOLDER_NAME
         resourceCache.projectContext = projectContext
         
+        shareModel.activityIdentifier = sharePlayActivityId // ENABLE MULTIPLAYER if not nil
+        shareModel.startSessionHandlerTask()
+
         if Self.didInitGodot {
             print("ERROR: Currently only one godot instance at a time is possible.")
         }
@@ -710,20 +733,56 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         let scale = entity.scale(relativeTo: nil) // TODO: test dragging nodes with different scales to make sure this is right
         
-        let gdStartGlobalTransform = godotEntitiesParent.convert(transform: .init(scale: scale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil)
-        let gdGlobalTransform = godotEntitiesParent.convert(transform: .init(scale: scale, rotation: newOrientation, translation: newPosition), from: nil)
+        let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
+        let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: newOrientation, translation: newPosition), from: nil))
+        let phase = ended ? "ended" : (began ? "began" : "changed")
         
         // pass a dictionary of values to the drag signal
         let dict: GDictionary = .init()
-        dict["global_transform"] = Variant(Transform3D(gdGlobalTransform))
-        dict["start_global_transform"] = Variant(Transform3D(gdStartGlobalTransform))
-        dict["phase"] = Variant(ended ? "ended" : (began ? "began" : "changed"))
+        dict["global_transform"] = Variant(gdGlobalTransform)
+        dict["start_global_transform"] = Variant(gdStartGlobalTransform)
+        dict["phase"] = Variant(phase)
         
         obj.emitSignal("spatial_drag", Variant(dict))
+        
+        if let node = obj as? Node, shareModel.automaticallyShareInput {
+            let nodePathString = node.getPath().description
+            
+            let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
+            let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_drag", params: params)
+            self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
+        }
         
         if ended {
             dragCtx.reset()
         }
+    }
+    
+    func onMultiplayerData(_ data: Data) {
+        let inputMessage: InputMessage<SpatialDragParams>
+        do {
+            inputMessage = try JSONDecoder().decode(InputMessage<SpatialDragParams>.self, from: data)
+        } catch {
+            log("error decoding json \(error)")
+            return
+        }
+        
+        guard let sceneTree else {
+            return
+        }
+        
+        let nodePath = NodePath(inputMessage.nodePath)
+        guard let node = sceneTree.root?.getIndexed(propertyPath: nodePath) as? Node else {
+            log("Could not find Node for node path \(nodePath)")
+            return
+        }
+        
+        let dict = GDictionary()
+        dict["global_transform"] = Variant(Transform3D(inputMessage.params.global_transform))
+        dict["start_global_transform"] = Variant(Transform3D(inputMessage.params.start_global_transform))
+        dict["phase"] = Variant(inputMessage.params.phase)
+        node.emitSignal(StringName(inputMessage.signalName), Variant(dict))
+        log("did emit \(inputMessage.signalName) from remote!")
     }
     
     /// A visionOS drag has ended. We emit a signal to inform Godot land.
@@ -834,3 +893,38 @@ extension Entity.ComponentSet {
     }
 }
 
+
+
+
+import simd
+public struct SpatialDragParams: Codable {
+    var global_transform: CodableTransform3D
+    var start_global_transform: CodableTransform3D
+    var phase: String
+}
+
+public struct InputMessage<T: Codable>: Codable where T: Codable {
+    var nodePath: String
+    var signalName: String
+    var params: T
+}
+
+public struct CodableTransform3D: Codable {
+    var basis0: simd_float3
+    var basis1: simd_float3
+    var basis2: simd_float3
+    var origin: simd_float3
+    
+    init(_ t: Transform3D) {
+        basis0 = .init(t.basis.x)
+        basis1 = .init(t.basis.y)
+        basis2 = .init(t.basis.z)
+        origin = .init(t.origin)
+    }
+}
+
+extension Transform3D {
+    init(_ c: CodableTransform3D) {
+        self.init(xAxis: .init(c.basis0), yAxis: .init(c.basis1), zAxis: .init(c.basis2), origin: .init(c.origin))
+    }
+}
