@@ -189,6 +189,8 @@ public class ShareModel: ObservableObject {
         
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
+        
+        session = nil
     }
     
     deinit {
@@ -330,6 +332,7 @@ extension ShareModel {
         godotData.node = node
         
         let callable = Callable(onGodotRequestJoin)
+        log("registering for 'join_activity' signal from swift...")
         let godotError = node.connect(signal: join_activity, callable: callable)
         if godotError != .ok {
             logError("Could not connect to \(join_activity) signal on SharePlay node: \(godotError)")
@@ -340,6 +343,7 @@ extension ShareModel {
         
     private func onGodotRequestJoin(args: [Variant]) -> Variant? {
         guard let node = godotData.node else { return nil }
+        log("godot is asking to join")
         automaticallyShareInput = Bool(node.get(property: "automatically_share_input")) ?? false
         maybeJoin()
         return nil

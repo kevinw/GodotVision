@@ -305,8 +305,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         projectContext.projectFolderName = projectFileDir ?? DEFAULT_PROJECT_FOLDER_NAME
         resourceCache.projectContext = projectContext
         
-        shareModel.activityIdentifier = sharePlayActivityId // ENABLE MULTIPLAYER if not nil
-        shareModel.startSessionHandlerTask()
+        if sharePlayActivityId != nil {
+            log("Starting shareplay session handler...")
+            shareModel.activityIdentifier = sharePlayActivityId // ENABLE MULTIPLAYER if not nil
+            shareModel.startSessionHandlerTask()
+        }
 
         if Self.didInitGodot {
             print("ERROR: Currently only one godot instance at a time is possible.")
@@ -771,18 +774,21 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             return
         }
         
-        let nodePath = NodePath(inputMessage.nodePath)
-        guard let node = sceneTree.root?.getIndexed(propertyPath: nodePath) as? Node else {
-            log("Could not find Node for node path \(nodePath)")
-            return
+        DispatchQueue.main.async {
+            
+            let nodePath = NodePath(inputMessage.nodePath)
+            guard let node = sceneTree.root?.getNode(path: nodePath) as? Node else {
+                log("Could not find Node for node path \(nodePath)")
+                return
+            }
+            
+            let dict = GDictionary()
+            dict["global_transform"] = Variant(Transform3D(inputMessage.params.global_transform))
+            dict["start_global_transform"] = Variant(Transform3D(inputMessage.params.start_global_transform))
+            dict["phase"] = Variant(inputMessage.params.phase)
+            node.emitSignal(StringName(inputMessage.signalName), Variant(dict))
+            log("did emit \(inputMessage.signalName) from remote!")
         }
-        
-        let dict = GDictionary()
-        dict["global_transform"] = Variant(Transform3D(inputMessage.params.global_transform))
-        dict["start_global_transform"] = Variant(Transform3D(inputMessage.params.start_global_transform))
-        dict["phase"] = Variant(inputMessage.params.phase)
-        node.emitSignal(StringName(inputMessage.signalName), Variant(dict))
-        log("did emit \(inputMessage.signalName) from remote!")
     }
     
     /// A visionOS drag has ended. We emit a signal to inform Godot land.
