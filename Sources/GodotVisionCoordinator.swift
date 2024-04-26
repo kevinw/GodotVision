@@ -37,6 +37,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     var shareModel = ShareModel()
     
+    public var extraScale: Float = 1.0
+    public var extraOffset: simd_float3 = .zero
+
     private var eventSubscription: EventSubscription? = nil
     private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
     private var nodeAddedToken: SwiftGodot.Object? = nil
@@ -670,8 +673,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             // Movement and rotation in the Godot camera (or our GodotVision camera volume node) get reflected
             // in our scene by applying the inverse transform of the camera to the parent Entity of Godot objects.
             godotEntitiesParent.transform = .init(volumeCamera.globalTransform.affineInverse())
-            godotEntitiesScale.scale = .one * godotToRealityKitRatio
         }
+        
+        let newScale = godotToRealityKitRatio * extraScale
+        godotEntitiesScale.scale = .one * newScale
+        godotEntitiesScale.position = extraOffset
     }
     
     // TODO: remove this function and use the `GodotNode` Component to link Entity -> Node3D
