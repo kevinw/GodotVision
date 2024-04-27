@@ -14,6 +14,7 @@ import SwiftUI
 import RealityKit
 import SwiftGodot
 import SwiftGodotKit
+import GameController
 
 private let whiteNonMetallic = SimpleMaterial(color: .white, isMetallic: false)
 
@@ -44,6 +45,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var resourceCache: ResourceCache = .init()
     private var sceneTree: SceneTree? = nil
     private var volumeCamera: SwiftGodot.Node3D? = nil
+
+    private var multipeerJoystickPosition: simd_float2? = nil
     private var audioStreamPlays: [AudioStreamPlay] = []
     private var _audioResources: [String: AudioFileResource] = [:]
     
@@ -523,6 +526,37 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             // TODO: ask visionOS application to quit? or...?
         }
         
+        var x: Double?
+        var y: Double?
+        
+        // need to check if this is connected
+        if let multipeerJoystickPosition = multipeerJoystickPosition {
+            x = Double(multipeerJoystickPosition.x)
+            y = Double(multipeerJoystickPosition.y)
+        } else if let leftThumbstick = GCController.current?.input.dpads[.leftThumbstick] {
+            if #available(visionOS 1.1, *) {
+                x = Double(leftThumbstick.xAxis.value)
+                y = Double(leftThumbstick.yAxis.value)
+            }
+        }
+        
+        if let x = x, let y = y {
+            if (x != .zero) {
+                SwiftGodot.Input.actionRelease(action: x > 0 ? "ui_left" : "ui_right")
+                SwiftGodot.Input.actionPress(action: x > 0 ? "ui_right" : "ui_left", strength: abs(x))
+            } else {
+                SwiftGodot.Input.actionRelease(action: "ui_right")
+                SwiftGodot.Input.actionRelease(action: "ui_left")
+            }
+            if (y != .zero) {
+                SwiftGodot.Input.actionRelease(action: y > 0 ? "ui_down" : "ui_up")
+                SwiftGodot.Input.actionPress(action: y > 0 ? "ui_up" : "ui_down", strength: abs(y))
+            } else {
+                SwiftGodot.Input.actionRelease(action: "ui_up")
+                SwiftGodot.Input.actionRelease(action: "ui_down")
+            }
+        }
+        
         for (id, isRoot) in nodeIdsForNewlyEnteredNodes {
             guard let node = GD.instanceFromId(instanceId: id) as? Node else {
                 logError("No new Node instance for id \(id)")
@@ -539,6 +573,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             if node.name == VISION_VOLUME_CAMERA_GODOT_NODE_NAME, let node3D = node as? Node3D {
                 didReceiveGodotVolumeCamera(node3D)
             }
+            
             
             if node.hasSignal("spatial_drag") {
                 // TODO: check if it's a collision object? warn if not?
@@ -660,6 +695,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         
         return nil
+    }
+    
+    public func receivedMultipeerJoystick(_ multipeerJoystickPosition: simd_float2) {
+        self.multipeerJoystickPosition = multipeerJoystickPosition
     }
     
     /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
