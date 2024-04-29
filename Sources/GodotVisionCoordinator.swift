@@ -547,6 +547,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
+        SwiftGodot.Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
+        
         if stepGodotFrame() {
             print("GODOT HAS QUIT")
             // TODO: ask visionOS application to quit? or...?
