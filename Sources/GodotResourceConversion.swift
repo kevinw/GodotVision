@@ -34,7 +34,7 @@ class ResourceCache {
         return textures[godotTexture]!
     }
     
-    func rkTexture(forGodotTexture godotTexture: SwiftGodot.Texture) -> RealityKit.TextureResource {
+    func rkTexture(forGodotTexture godotTexture: SwiftGodot.Texture) -> RealityKit.TextureResource? {
         textureEntry(forGodotTexture: godotTexture).getTexture(resourceCache: self)
     }
     
@@ -73,16 +73,49 @@ class ResourceEntry<G, R> where G: SwiftGodot.Resource {
 }
 
 class TextureEntry: ResourceEntry<SwiftGodot.Texture, RealityKit.TextureResource> {
-    func getTexture(resourceCache: ResourceCache) -> RealityKit.TextureResource {
-        if let godotTex = godotResource as? SwiftGodot.Texture2D {
+    func getTexture(resourceCache: ResourceCache) -> RealityKit.TextureResource? {
+        if let godotViewportTex = godotResource as? SwiftGodot.ViewportTexture {
+            logError("ViewportTextures are not currently supported in headless GodotVision builds: \(godotViewportTex)")
+            /*
+            if let image = godotViewportTex.getImage() {
+                let imageData = image.getData()
+                if let data = imageData.asDataNoCopy() {
+                    do {
+                        let format = image.getFormat()
+                        let mtlFormat: MTLPixelFormat
+                        switch format {
+                        case .rgba8:
+                            mtlFormat = .rgba8Uint
+                        default:
+                            fatalError("unknown image format \(format)")
+                        }
+                        return try .init(dimensions: .dimensions(width: Int(image.getWidth()), height: Int(image.getHeight())),
+                                         format: .raw(pixelFormat: mtlFormat),
+                                         contents: .init(mipmapLevels: [.mip(data: data, bytesPerRow: data.count / Int(image.getWidth()))]))
+                    } catch {
+                        logError("creating viewport texture \(error)")
+                    }
+                }
+            }
+             */
+        } else if let godotTex = godotResource as? SwiftGodot.Texture2D {
             if let projectContext = resourceCache.projectContext {
-                return try! .load(contentsOf: projectContext.fileUrl(forGodotResourcePath: godotTex.resourcePath))
+                let resourcePath = godotTex.resourcePath
+                if !resourcePath.isEmpty {
+                    do {
+                        return try .load(contentsOf: projectContext.fileUrl(forGodotResourcePath: resourcePath))
+                    } catch {
+                        logError("loading texture with resourcePath: \(resourcePath) - \(error)")
+                    }
+                } else {
+                    logError("Texture2D had empty resourcePath")
+                }
             } else {
                 logError("projectContext not set in ResourceCache")
             }
         }
-        
-        return try! .load(named: "error-unknown-texture")
+            
+        return nil
     }
 }
 
@@ -99,7 +132,12 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
                 // ALBEDO (base color)
                 //
                 if let albedoTexture = stdMat.albedoTexture {
-                    rkMat.baseColor = .init(tint: uiColor(forGodotColor: stdMat.albedoColor), texture: .init(resourceCache.rkTexture(forGodotTexture: albedoTexture)))
+                    let tex = resourceCache.rkTexture(forGodotTexture: albedoTexture)
+                    if let tex {
+                        rkMat.baseColor = .init(tint: uiColor(forGodotColor: stdMat.albedoColor), texture: .init(tex))
+                    } else {
+                        rkMat.baseColor = .init(tint: uiColor(forGodotColor: stdMat.albedoColor))
+                    }
                 } else {
                     if stdMat.transparency == .alpha {
                         rkMat.baseColor = .init(tint: uiColor(forGodotColor: stdMat.albedoColor).withAlphaComponent(1.0))
@@ -118,8 +156,8 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
                 //
                 if stdMat.emissionEnabled {
                     let emissiveColor: PhysicallyBasedMaterial.EmissiveColor
-                    if let emissionTexture = stdMat.emissionTexture {
-                        emissiveColor  = .init(color: uiColor(forGodotColor: stdMat.emission), texture: .init(resourceCache.rkTexture(forGodotTexture: emissionTexture)))
+                    if let emissionTexture = stdMat.emissionTexture, let tex = resourceCache.rkTexture(forGodotTexture: emissionTexture) {
+                        emissiveColor  = .init(color: uiColor(forGodotColor: stdMat.emission), texture: .init(tex))
                     } else {
                         emissiveColor = .init(color: uiColor(forGodotColor: stdMat.emission))
                     }
