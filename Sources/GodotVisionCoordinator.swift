@@ -9,6 +9,7 @@ Mirror Node3Ds from Godot to RealityKit.
 let HANDLE_RUNLOOP_MANUALLY = true
 let DO_EXTRA_DEBUGGING = false
 
+import ARKit
 import Foundation
 import SwiftUI
 import RealityKit
@@ -32,7 +33,7 @@ struct AudioStreamPlay {
 public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var godotInstanceIDToEntity: [Int64: Entity] = [:]
     
-    private var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
+    var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
     private var godotEntitiesScale = Entity() /// Applies a global scale to the godot scene based on the volume size and the godot camera volume.
     
     var shareModel = ShareModel()
@@ -60,6 +61,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var projectContext: GodotProjectContext = .init()
     private var skeletonEntities: Set<Entity> = .init() /// Entities we need to apply bone transform updates to every frame.
 
+    var ar: ARState = .init() /// State for AR functionality.
+    
     // explanation in comment below
     let volumeRatioDebouncer = Debouncer(delay: 2)
     
@@ -174,6 +177,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     private func onNodeRemoved(_ node: SwiftGodot.Node) {
         let _ = godotInstanceIDsRemovedFromTree.insert(node.getInstanceId())
+        if let node3D = node as? Node3D {
+            ar.nodes.remove(node3D)
+        }
     }
     
     private func onNodeTransformsChanged(_ packedByteArray: PackedByteArray) {
@@ -588,6 +594,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 }
             }
             
+            // XXX TEMP HACK while we build out the API for requesting head tracking.
+            if node.name == "ARTracking", let node3D = node as? Node3D {
+                ensureARInited()
+                ar.nodes.insert(node3D)
+            }
+            
             if !isRoot, let nodeParent = node.getParent() {
                 let parentId = Int64(nodeParent.getInstanceId())
                 if let parent = godotInstanceIDToEntity[parentId] {
@@ -663,6 +675,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             skeletonEntities.remove(entity)
             godotInstanceIDToEntity.removeValue(forKey: Int64(instanceIdRemovedFromTree))
         }
+        
+        arUpdate()
         
         // Update skeletons
         for entity in skeletonEntities {
