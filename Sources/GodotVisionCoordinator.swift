@@ -551,9 +551,39 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
+    private var iphoneControllerRotation: Float? = nil
+    private var buttonOnePressed: Bool = false
+    private var buttonTwoPressed: Bool = false
+    
+    public func receivedMultipeerInput(_ rotation: Float, _ buttonOnePressed: Bool, _ buttonTwoPressed: Bool) {
+        self.iphoneControllerRotation = rotation
+        self.buttonOnePressed = buttonOnePressed
+        self.buttonTwoPressed = buttonTwoPressed
+    }
     
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         SwiftGodot.Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
+        
+        if let iphoneControllerRotation  {
+            var rotation = Double(iphoneControllerRotation)
+            if rotation > 0 {
+                SwiftGodot.Input.actionRelease(action: "ui_left")
+                SwiftGodot.Input.actionPress(action:"ui_right", strength: rotation)
+            } else {
+                SwiftGodot.Input.actionRelease(action: "ui_right")
+                SwiftGodot.Input.actionPress(action:"ui_left", strength: abs(rotation))
+            }
+            if buttonOnePressed {
+                SwiftGodot.Input.actionPress(action: "ui_accept")
+            } else {
+                SwiftGodot.Input.actionRelease(action: "ui_accept")
+            }
+            if buttonTwoPressed {
+                SwiftGodot.Input.actionPress(action: "ui_select")
+            } else {
+                SwiftGodot.Input.actionRelease(action: "ui_select")
+            }
+        }
         
         if stepGodotFrame() {
             print("GODOT HAS QUIT")
