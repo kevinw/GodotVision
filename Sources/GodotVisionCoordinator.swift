@@ -51,6 +51,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var sceneTree: SceneTree? = nil
     private var volumeCamera: SwiftGodot.Node3D? = nil
     private var audioStreamPlays: [AudioStreamPlay] = []
+    private var audioPlaybackControllers: [AudioStreamPlayer3D: AudioPlaybackController] = [:]
     private var _audioResources: [String: AudioFileResource] = [:]
     
     private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
@@ -179,6 +180,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let _ = godotInstanceIDsRemovedFromTree.insert(node.getInstanceId())
         if let node3D = node as? Node3D {
             ar.nodes.remove(node3D)
+            if let asp = node as? AudioStreamPlayer3D {
+                audioPlaybackControllers.removeValue(forKey: asp)
+            }
         }
     }
     
@@ -293,6 +297,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     func resetRealityKit() {
         assert(Thread.current.isMainThread)
         audioStreamPlays.removeAll()
+        audioPlaybackControllers.removeAll()
         resourceCache.reset()
         skeletonEntities.removeAll()
         for child in godotEntitiesParent.children.map({ $0 }) {
@@ -392,11 +397,31 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
-    private func cacheAudioResource(resourcePath: String) -> AudioFileResource? {
+    private func cacheAudioResource(resourcePath: String, godotInstanceID: Int64) -> AudioFileResource? {
         var audioResource: AudioFileResource? = _audioResources[resourcePath]
         if audioResource == nil {
+            var configuration = AudioFileResource.Configuration()
+            
+            // TODO: see if there's a way to use metadata to do shouldRandomizeStartTime
+            
+            // See if we need to loop.
+            // TODO: different AudioStreams may point at the same resource path?
+            if let audioStreamPlayer3D = GD.instanceFromId(instanceId: godotInstanceID) as? AudioStreamPlayer3D,
+                let audioStreamWAV = audioStreamPlayer3D.stream as? AudioStreamWAV,
+                audioStreamWAV.loopMode == .forward
+            {
+                switch audioStreamWAV.loopMode {
+                case .disabled:
+                    ()
+                case .forward:
+                    configuration.shouldLoop = true
+                default:
+                    logError("AudioStreamWAV.loopMode '\(audioStreamWAV.loopMode)' not supported yet.")
+                }
+            }
+
             do {
-                audioResource = try AudioFileResource.load(contentsOf: projectContext.fileUrl(forGodotResourcePath: resourcePath))
+                audioResource = try AudioFileResource.load(contentsOf: projectContext.fileUrl(forGodotResourcePath: resourcePath), configuration: configuration)
             } catch {
                 logError(error)
                 return nil
@@ -565,7 +590,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         SwiftGodot.Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
         
         if let iphoneControllerRotation  {
-            var rotation = Double(iphoneControllerRotation)
+            let rotation = Double(iphoneControllerRotation)
             if rotation > 0 {
                 SwiftGodot.Input.actionRelease(action: "ui_left")
                 SwiftGodot.Input.actionPress(action:"ui_right", strength: rotation)
@@ -588,6 +613,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         if stepGodotFrame() {
             print("GODOT HAS QUIT")
             // TODO: ask visionOS application to quit? or...?
+        }
+        
+        for (godotAudioStreamPlayer, pbCon) in audioPlaybackControllers {
+            if pbCon.isPlaying, godotAudioStreamPlayer.isPlaying() {
+                pbCon.speed = godotAudioStreamPlayer.pitchScale
+            }
         }
         
         for (id, isRoot) in nodeIdsForNewlyEnteredNodes {
@@ -681,12 +712,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 continue
             }
             
-            if let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath) {
+            if let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath, godotInstanceID: audioStreamPlay.godotInstanceID) {
                 if audioStreamPlay.prepareOnly {
                     let _ = entity.prepareAudio(audioResource)
                 } else {
                     let audioPlaybackController = entity.playAudio(audioResource)
                     audioPlaybackController.gain = audioStreamPlay.volumeDb
+                    if let audioStreamPlayer = GD.instanceFromId(instanceId: audioStreamPlay.godotInstanceID) as? AudioStreamPlayer3D {
+                        audioPlaybackControllers[audioStreamPlayer] = audioPlaybackController
+                    }
                 }
             }
         }
