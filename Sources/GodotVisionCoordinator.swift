@@ -441,40 +441,46 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     private func _updateModelEntityMesh(_ node: Node, _ existingEntity: ModelEntity?) -> ModelEntity? {
-        // Inspect the Godot node to see if we have a mesh, materials, and a skeleton.
-        var materials: [SwiftGodot.Material]? = nil
-        
         var mesh: SwiftGodot.Mesh? = nil
+        var materials: [SwiftGodot.Material]? = nil
         var skeleton3D: SwiftGodot.Skeleton3D? = nil
         var flipFacesIfNoIndexBuffer: Bool = false
+        var instanceTransforms: [simd_float4x4]? = nil
+        
+        // Inspect the Godot node to see if we have a mesh, materials, and a skeleton.
         
         if let meshInstance3D = node as? MeshInstance3D {
-            //
             // MeshInstance3D
-            //
             skeleton3D = meshInstance3D.skeleton.isEmpty() ? nil : (meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D)
             mesh = meshInstance3D.mesh
             if let mesh {
                 materials = (0..<mesh.getSurfaceCount()).compactMap { meshInstance3D.getActiveMaterial(surface: $0) }
             }
+        } else if let multiMeshInstance3D = node as? MultiMeshInstance3D {
+            // MultiMeshInstance3D
+            if let multimesh = multiMeshInstance3D.multimesh {
+                mesh = multimesh.mesh
+                let instanceCount = multimesh.visibleInstanceCount >= 0 ? multimesh.visibleInstanceCount : multimesh.instanceCount
+                instanceTransforms = (0..<instanceCount).map { .init(multimesh.getInstanceTransform(instance: $0)) }
+            }
         } else if let csgShape = node as? CSGShape3D, csgShape.isRootShape() {
-            //
             // CSG meshes
-            //
             let transformAndMesh = csgShape.getMeshes() // returns [Transform, Mesh]
             if transformAndMesh.count >= 2 {
                 flipFacesIfNoIndexBuffer = true
                 mesh = transformAndMesh[1].asObject(SwiftGodot.Mesh.self)
-                materials = []
-                if let mesh {
-                    materials = (0..<mesh.getSurfaceCount()).compactMap { mesh.surfaceGetMaterial(surfIdx: $0) }
-                }
             }
         }
         
+        // If getActiveMaterial did not provide materials, use the materials from the mesh directly.
+        if materials == nil, let mesh {
+            materials = (0..<mesh.getSurfaceCount()).compactMap { mesh.surfaceGetMaterial(surfIdx: $0) }
+        }
+        
+        // Create a ModelEntity if we have a mesh.
         var entity: ModelEntity? = nil
         if let mesh, let node3D = node as? Node3D {
-            let meshCreationInfo = MeshCreationInfo(godotMesh: mesh, godotSkeleton: skeleton3D, flipFacesIfNoIndexBuffer: flipFacesIfNoIndexBuffer)
+            let meshCreationInfo = MeshCreationInfo(godotMesh: mesh, godotSkeleton: skeleton3D, flipFacesIfNoIndexBuffer: flipFacesIfNoIndexBuffer, instanceTransforms: instanceTransforms)
             
             if let existingEntity, let oldMeshEntry = existingEntity.components[GodotNode.self]?.meshEntry {
                 oldMeshEntry.entities.remove(existingEntity)
@@ -499,6 +505,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         if let entity {
             if let node3D = node as? Node3D {
+                // Establish a link between the original Godot Node3D and the RK Entity.
                 entity.components.getOrMake { (godotNode: inout GodotNode) in
                     godotNode.node3D = node3D
                 }

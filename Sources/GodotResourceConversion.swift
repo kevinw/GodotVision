@@ -179,10 +179,19 @@ class MaterialEntry: ResourceEntry<SwiftGodot.Material, RealityKit.Material> {
     }
 }
 
+/// Describes a Godot mesh and the information needed to convert it to a RealityKit mesh.
 struct MeshCreationInfo: Hashable {
     var godotMesh: SwiftGodot.Mesh
     var godotSkeleton: SwiftGodot.Skeleton3D? = nil
     var flipFacesIfNoIndexBuffer: Bool = false
+    var instanceTransforms: [simd_float4x4]? = nil /// If not nil, the created mesh will be instanced, one instance for each transform.
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(godotMesh)
+        hasher.combine(godotSkeleton)
+        hasher.combine(flipFacesIfNoIndexBuffer)
+        hasher.combine(instanceTransforms?.count ?? -1) // TODO: the notion of memoizing these MeshCreationInfos when there are instance arrays might not really make sense??
+    }
 }
 
 class MeshEntry {
@@ -198,7 +207,10 @@ class MeshEntry {
 
 private var meshCache: [MeshCreationInfo: MeshEntry] = [:] // TODO @Leak
 
-func createRealityKitMesh(debugName: String, meshCreationInfo: MeshCreationInfo, onResourceChange: @escaping (MeshEntry) -> Void) -> MeshEntry? {
+func createRealityKitMesh(debugName: String, 
+                          meshCreationInfo: MeshCreationInfo,
+                          onResourceChange: @escaping (MeshEntry) -> Void) -> MeshEntry?
+{
     if let meshEntry = meshCache[meshCreationInfo] {
         return meshEntry
     }
@@ -272,6 +284,7 @@ func createRealityKitSkeleton(skeleton: SwiftGodot.Skeleton3D) -> MeshResource.S
     )
 }
 
+/// Converts Godot mesh data to RealityKit MeshResource.Contents.
 private func meshContents(debugName: String,
                           meshCreationInfo: MeshCreationInfo,
                           verbose: Bool = false) throws -> MeshResource.Contents
@@ -470,8 +483,18 @@ private func meshContents(debugName: String,
     }
     
     var modelCollection = MeshModelCollection()
-    modelCollection.insert(MeshResource.Model(id: "model_\(debugName)", parts: meshParts))
+    let modelName: String = "model_\(debugName)"
+    modelCollection.insert(MeshResource.Model(id: modelName, parts: meshParts))
     newContents.models = modelCollection
+    
+    //
+    // Instances
+    //
+    if let instanceTransforms = meshCreationInfo.instanceTransforms {
+        newContents.instances = .init(instanceTransforms.enumerated().map { (idx, xform) in
+            MeshResource.Instance(id: idx.description, model: modelName, at: xform)
+        })
+    }
     
     return newContents
 }
