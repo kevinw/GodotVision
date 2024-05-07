@@ -40,6 +40,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     
     public var extraScale: Float = 1.0
     public var extraOffset: simd_float3 = .zero
+    @Published public var paused: Bool = false
 
     private var eventSubscription: EventSubscription? = nil
     private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
@@ -584,12 +585,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     }
     
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
-        SwiftGodot.Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
+        Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
 
-        
-        if stepGodotFrame() {
+        if !paused && stepGodotFrame() {
             print("GODOT HAS QUIT")
-            // TODO: ask visionOS application to quit? or...?
         }
         
         for (godotAudioStreamPlayer, pbCon) in audioPlaybackControllers {
