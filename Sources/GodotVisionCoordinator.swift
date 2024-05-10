@@ -22,6 +22,12 @@ let VISION_VOLUME_CAMERA_GODOT_NODE_NAME = "VisionVolumeCamera"
 let SHOW_CORNERS = false
 let DEFAULT_PROJECT_FOLDER_NAME = "Godot_Project"
 
+// StringNames for interacting with Godot API efficiently.
+let spatial_drag: StringName     = "spatial_drag"
+let gv_auto_prepare: StringName  = "gv.auto_prepare"
+let hover_effect: StringName     = "hover_effect"
+let grounding_shadow: StringName = "grounding_shadow"
+
 struct AudioStreamPlay {
     var godotInstanceID: Int64 = 0
     var resourcePath: String
@@ -236,11 +242,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             
             // Update Transform
-            var t = RealityKit.Transform()
-            t.translation = .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z)
-            t.rotation = nodeData.rot
-            t.scale = .init(nodeData.scl.x, nodeData.scl.y, nodeData.scl.z)
-            entity.transform = t
+            entity.transform = .init(scale: .init(nodeData.scl.x, nodeData.scl.y, nodeData.scl.z),
+                                     rotation: nodeData.rot,
+                                     translation: .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z))
+            
             entity.isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
         }
     }
@@ -513,7 +518,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             
             // Set grounding shadows on entities with a mesh (unless a metadata entry for 'grounding_shadow' exists and is false
-            if mesh != nil && node.getMetaBool("grounding_shadow", defaultValue: true) {
+            if mesh != nil && node.getMetaBool(grounding_shadow, defaultValue: true) {
                 entity.components.set(GroundingShadowComponent(castsShadow: true))
             } else {
                 entity.components.remove(GroundingShadowComponent.self)
@@ -544,7 +549,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 entity.components.set(InputTargetComponent())
                 
                 // If there's a metadata entry for 'hover_effect' with the boolean value of true, we add a RealityKit HoverEffectComponent.
-                if node.getMetaBool("hover_effect", defaultValue: false) {
+                if node.getMetaBool(hover_effect, defaultValue: false) {
                     entity.components.set(HoverEffectComponent())
                 }
                 entity.components.set(collision)
@@ -556,6 +561,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             entity.transform = RealityKit.Transform(node3D.transform)
             entity.isEnabled = node3D.visible
         }
+        
+        
+        entity.components[PhysicsBodyComponent.self] = .none
         
         return entity
     }
@@ -614,14 +622,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 didReceiveGodotVolumeCamera(node3D)
             }
             
-            if node.hasSignal("spatial_drag") {
+            if node.hasSignal(spatial_drag) {
                 // TODO: check if it's a collision object? warn if not?
                 entity.components.set(GodotVisionDraggable())
             }
             
             if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
                 // See if we need to prepare the audio resource (prevents a hitch on first play).
-                if audioStreamPlayer3D.getMetaBool("gv.auto_prepare", defaultValue: true) {
+                if audioStreamPlayer3D.getMetaBool(gv_auto_prepare, defaultValue: true) {
                     if let resourcePath = audioStreamPlayer3D.stream?.resourcePath {
                         audioStreamPlays.append(.init(godotInstanceID: Int64(audioStreamPlayer3D.getInstanceId()),
                                                       resourcePath: resourcePath,
@@ -756,7 +764,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         // See if this Node has a 'drag' signal
         guard let obj = self.godotInstanceFromRealityKitEntityID(entity.id) else { return }
-        if !obj.hasSignal("spatial_drag") {
+        if !obj.hasSignal(spatial_drag) {
             return
         }
         
@@ -808,9 +816,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         dict["start_global_transform"] = Variant(gdStartGlobalTransform)
         dict["phase"] = Variant(phase)
         
-        obj.emitSignal("spatial_drag", Variant(dict))
+        obj.emitSignal(spatial_drag, Variant(dict))
         
-        if let node = obj as? Node, shareModel.automaticallyShareInput {
+        if shareModel.automaticallyShareInput, let node = obj as? Node {
             let nodePathString = node.getPath().description
             
             let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
