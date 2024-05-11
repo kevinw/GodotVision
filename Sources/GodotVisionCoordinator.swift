@@ -67,7 +67,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
     
     private var projectContext: GodotProjectContext = .init()
-    private var skeletonEntities: Set<Entity> = .init() /// Entities we need to apply bone transform updates to every frame.
+    private var skeletonsToUpdate: Dictionary<Skeleton3D, [ModelEntity]> = .init()
 
     var ar: ARState = .init() /// State for AR functionality.
     
@@ -305,7 +305,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         audioStreamPlays.removeAll()
         audioPlaybackControllers.removeAll()
         resourceCache.reset()
-        skeletonEntities.removeAll()
+        skeletonsToUpdate.removeAll()
         for child in godotEntitiesParent.children.map({ $0 }) {
             child.removeFromParent()
         }
@@ -562,7 +562,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             entity.isEnabled = node3D.visible
         }
         
-        
+        // Remove RealityKit physics since we rely on Godot's.
         entity.components[PhysicsBodyComponent.self] = .none
         
         return entity
@@ -612,9 +612,16 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             
             let entity = _createRealityKitEntityForNewNode(node)
-            if let node3D = node as? Node3D, isSkeletonNode(node: node3D, entity: entity) {
+            if let node3D = node as? Node3D, let skeleton = getSkeletonNode(node: node3D, entity: entity) {
                 entity.components.set(GodotNode(node3D: node3D))
-                skeletonEntities.insert(entity)
+                if let modelEntity = entity as? ModelEntity {
+                    if skeletonsToUpdate[skeleton] == nil {
+                        skeletonsToUpdate[skeleton] = .init()
+                    }
+                    skeletonsToUpdate[skeleton]?.append(modelEntity)
+                } else {
+                    logError("expected to cast as ModelEntity but failed: \(entity)")
+                }
             }
             
             // we notice a specially named node for the "bounds"
@@ -720,19 +727,39 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             entity.components.remove(GodotNode.self)
             entity.removeFromParent()
-            skeletonEntities.remove(entity)
             godotInstanceIDToEntity.removeValue(forKey: Int64(instanceIdRemovedFromTree))
         }
         
         arUpdate()
         
         // Update skeletons
-        for entity in skeletonEntities {
-            if let node = entity.components[GodotNode.self]?.node3D {
-                updateSkeletonNode(node: node, entity: entity)
+        do {
+            let skeletons = Array(skeletonsToUpdate.keys)
+            var results = Array(Skeleton3D.getMultipleSkeletonBonePoses(skeletons: ObjectCollection(skeletons)))
+            // returns [stride, num_bones_1, transform_ptr_1, num_bones_2, transform_ptr_2] where each ptr points to a block of transforms num_bones long, `stride` bytes apart
+            assert(results.count > 0)
+            let stride = results.removeFirst()
+            assert(results.count == skeletons.count * 2)
+            for (skeletonIdx, skeleton) in skeletons.enumerated() {
+                guard let modelEntities = skeletonsToUpdate[skeleton] else {
+                    logError("no modelEntities for skeleton \(skeleton)")
+                    continue
+                }
+                
+                let numBonesIdx = skeletonIdx * 2
+                let (numBones, transformPtrInt) = (Int(results[numBonesIdx]), results[numBonesIdx + 1])
+                let transforms = (0..<numBones).map { boneIdx in
+                    let firstTransformAddr = UInt(transformPtrInt + stride * Int64(boneIdx))
+                    guard let transformPtr = UnsafeRawPointer(bitPattern: firstTransformAddr)?.bindMemory(to: Transform3D.self, capacity: 1) else {
+                        fatalError("could not access bone transforms for \(skeleton)")
+                    }
+                    return Transform(transformPtr.pointee)
+                }
+                
+                modelEntities.forEach { $0.jointTransforms = transforms }
             }
         }
-        
+
         if let volumeCamera {
             // Movement and rotation in the Godot camera (or our GodotVision camera volume node) get reflected
             // in our scene by applying the inverse transform of the camera to the parent Entity of Godot objects.
@@ -941,14 +968,14 @@ struct GodotVisionDraggable: Component {
     }
 }
     
-private func isSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) -> Bool {
+private func getSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) -> Skeleton3D? {
     if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
-        if let meshInstance3D = node as? MeshInstance3D, let _ = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
-            return true
+        if let meshInstance3D = node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
+            return skeleton
         }
     }
     
-    return false
+    return nil
 }
 
 protocol TriviallyInitializableComponent: Component { init() }
