@@ -6,8 +6,11 @@ import SwiftGodot
 import SwiftGodotKit
 
 extension Object {
+    func getMetaBool(_ name: StringName, defaultValue: Bool) -> Bool {
+        Bool(getMeta(name: name, default: Variant(defaultValue))) ?? defaultValue
+    }
     func getMetaBool(_ name: String, defaultValue: Bool) -> Bool {
-        Bool(getMeta(name: StringName(name), default: Variant(defaultValue))) ?? defaultValue
+        getMetaBool(StringName(name), defaultValue: defaultValue)
     }
 }
 
