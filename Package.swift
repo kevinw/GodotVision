@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "GodotVision", targets: ["GodotVision"])
     ],
     dependencies: [
-        .package(url: "https://github.com/multijam/SwiftGodotKit", revision: "b705ab685f21744b0c61015e72809e6ac19ffb80"),
+        .package(url: "https://github.com/multijam/SwiftGodotKit", revision: "ddda0bd082b5a597f9851059b5079f5bfcbf30a1"),
     ],
     targets: [
         .target(
