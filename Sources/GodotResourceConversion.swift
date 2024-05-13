@@ -341,7 +341,7 @@ private func meshContents(debugName: String,
         // positions
         //
         guard let vertices = surfaceArrays[ArrayType.ARRAY_VERTEX.rawValue].cast(as: PackedVector3Array.self, debugName: "mesh vertices") else { continue }
-        let verticesArray = vertices.map { simd_float3($0) }
+        let verticesArray = vertices.bufPtr().map { simd_float3($0) }
         meshPart.positions = MeshBuffers.Positions(verticesArray)
         
         //
@@ -360,7 +360,7 @@ private func meshContents(debugName: String,
         case .packedInt32Array:
             guard let indices = surfaceArrays[ArrayType.ARRAY_INDEX.rawValue].cast(as: PackedInt32Array.self, debugName: "mesh indices") else { continue }
             let indicesArray: [UInt32]
-            indicesArray = reverseWindingOrderOfIndexBuffer(indices.map { UInt32($0) })
+            indicesArray = reverseWindingOrderOfIndexBuffer(indices.bufPtr().map { UInt32($0) })
             primitivesCount = indicesArray.count
             meshPart.triangleIndices = MeshBuffers.TriangleIndices(indicesArray)
         default:
@@ -373,7 +373,7 @@ private func meshContents(debugName: String,
         //
         let normalsVariant = surfaceArrays[ArrayType.ARRAY_NORMAL.rawValue]
         if normalsVariant != .init(), let normals = normalsVariant.cast(as: PackedVector3Array.self, debugName: "normals") {
-            let normalsArray = normals.map { simd_float3($0) }
+            let normalsArray = normals.bufPtr().map { simd_float3($0) }
             if verbose { print("  setting normals: \(normals.count)") }
             meshPart.normals = MeshBuffers.Normals(normalsArray)
         }
@@ -406,7 +406,7 @@ private func meshContents(debugName: String,
         //
         let uvsVariant = surfaceArrays[ArrayType.ARRAY_TEX_UV.rawValue]
         if uvsVariant != .init(), let uvs = uvsVariant.cast(as: PackedVector2Array.self, debugName: "uvs") {
-            let uvsArray = uvs.map { simd_float2(x: $0.x, y: 1 - $0.y) }
+            let uvsArray = uvs.bufPtr().map { simd_float2(x: $0.x, y: 1 - $0.y) }
             if verbose { print("  setting texture coordinates: \(uvsArray.count)") }
             meshPart.textureCoordinates = MeshBuffers.TextureCoordinates(uvsArray)
         }
@@ -424,11 +424,11 @@ private func meshContents(debugName: String,
                 ()
             case .packedInt32Array:
                 if let bones = bonesVariant.cast(as: PackedInt32Array.self, debugName: "ARRAY_BONES") {
-                    jointInfluences = bones.map { boneIndex in MeshJointInfluence(jointIndex: Int(boneIndex), weight: 0) }
+                    jointInfluences = bones.bufPtr().map { boneIndex in MeshJointInfluence(jointIndex: Int(boneIndex), weight: 0) }
                 }
             case .packedFloat32Array:
                 if let bones = bonesVariant.cast(as: PackedFloat32Array.self, debugName: "ARRAY_BONES") {
-                    jointInfluences = bones.map { MeshJointInfluence(jointIndex: Int($0), weight: 0) }
+                    jointInfluences = bones.bufPtr().map { MeshJointInfluence(jointIndex: Int($0), weight: 0) }
                 }
             default:
                 logError("ARRAY_BONES array had unexpected gtype: \(bonesVariant.gtype)")

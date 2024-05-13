@@ -134,8 +134,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         // This is the SwiftGodotKit "entry" point
         runGodot(args: args,
                  initHook: initHook,
-                 loadScene: self.receivedSceneTree,
-                 loadProjectSettings: { _ in },
+                 loadScene: receivedSceneTree,
+                 loadProjectSettings: { _ in
+                    // WARNING: this never gets called by SwiftGodotKit (see https://github.com/migueldeicaza/SwiftGodotKit/issues/10)
+                 },
                  verbose: true)
     }
     
