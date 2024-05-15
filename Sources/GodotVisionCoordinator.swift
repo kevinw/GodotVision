@@ -218,7 +218,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             var flags: UInt32
             var pad0: Float
         }
-
+        
         data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
             ptr.withMemoryRebound(to: NodeData.self) { nodeDatas in
                 _receivedNodeDatas(nodeDatas)
@@ -227,34 +227,34 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         func _receivedNodeDatas(_ nodeDatas: UnsafeBufferPointer<NodeData>) {
 #if false
-        var transformSetCount = 0
-        let swiftStride = MemoryLayout<NodeData>.stride
-        let swiftSize = MemoryLayout<NodeData>.size
-        //print("SWIFT offsetof transform", MemoryLayout<NodeData>.offset(of: \.transform))
-        print("SWIFT offsetof rotation", MemoryLayout<NodeData>.offset(of: \.rot))
-        print("SWIFT stride", swiftStride, "size", swiftSize)
-        print("Swift bound array has", nodeDatas.count, "items.")
-        print("DATA", ptr.baseAddress, "has", data.count, "bytes of raw data")
+            var transformSetCount = 0
+            let swiftStride = MemoryLayout<NodeData>.stride
+            let swiftSize = MemoryLayout<NodeData>.size
+            //print("SWIFT offsetof transform", MemoryLayout<NodeData>.offset(of: \.transform))
+            print("SWIFT offsetof rotation", MemoryLayout<NodeData>.offset(of: \.rot))
+            print("SWIFT stride", swiftStride, "size", swiftSize)
+            print("Swift bound array has", nodeDatas.count, "items.")
+            print("DATA", ptr.baseAddress, "has", data.count, "bytes of raw data")
 #endif
-        for nodeData in nodeDatas {
-            if nodeData.objectID == 0 { continue }
-            
-            guard let entity = godotInstanceIDToEntity[nodeData.objectID] else {
-                continue
-            }
-            
-            // Update Transform
-            entity.transform = .init(scale: .init(nodeData.scl.x, nodeData.scl.y, nodeData.scl.z),
-                                     rotation: nodeData.rot,
-                                     translation: .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z))
-            
-            let isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
-            if entity.isEnabled != isEnabled {
-                entity.isEnabled = isEnabled
+            for nodeData in nodeDatas {
+                if nodeData.objectID == 0 { continue }
+                
+                guard let entity = godotInstanceIDToEntity[nodeData.objectID] else {
+                    continue
+                }
+                
+                // Update Transform
+                entity.transform = .init(scale: .init(nodeData.scl.x, nodeData.scl.y, nodeData.scl.z),
+                                         rotation: nodeData.rot,
+                                         translation: .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z))
+                
+                let isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
+                if entity.isEnabled != isEnabled {
+                    entity.isEnabled = isEnabled
+                }
             }
         }
-    }
-
+        
     }
     
     private var nodeIdsForNewlyEnteredNodes: [(Int64, Bool)] = []
@@ -1003,8 +1003,6 @@ extension Entity.ComponentSet {
         }
     }
 }
-
-
 
 
 import simd

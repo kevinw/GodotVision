@@ -219,8 +219,8 @@ func createRealityKitMesh(entity: Entity,
     }
     
     doLoggingErrors {
-        let meshContents = try meshContents(debugName: debugName, meshCreationInfo: meshCreationInfo, verbose: false)
-        #if true
+        let meshContents = try meshContents(debugName: debugName, meshCreationInfo: meshCreationInfo, verbose: verbose)
+        #if true // Call MeshResource async version so GPU buffers get filled on bg thread.
         Task(priority: .high) {
             let meshResource = try await MeshResource(from: meshContents)
             await MainActor.run {
@@ -242,7 +242,6 @@ func createRealityKitMesh(entity: Entity,
         }
         onMeshEntry(meshEntry)
     }
-    
 
     @Sendable func onMeshResource(meshResource: MeshResource) {
         let meshEntry = MeshEntry(meshResource: meshResource)
