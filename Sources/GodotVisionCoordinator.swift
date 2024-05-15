@@ -55,7 +55,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var audioStreamPlayerPlaybackToken: SwiftGodot.Object? = nil
     private var receivedRootNode = false
     private var resourceCache: ResourceCache = .init()
-    private var sceneTree: SceneTree? = nil
+    public var sceneTree: SceneTree? = nil
     private var volumeCamera: SwiftGodot.Node3D? = nil
     private var audioStreamPlays: [AudioStreamPlay] = []
     private var audioPlaybackControllers: [AudioStreamPlayer3D: AudioPlaybackController] = [:]
@@ -248,7 +248,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                                      rotation: nodeData.rot,
                                      translation: .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z))
             
-            entity.isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
+            let isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
+            if entity.isEnabled != isEnabled {
+                entity.isEnabled = isEnabled
+            }
         }
     }
 
@@ -443,12 +446,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private func _onMeshResourceChanged(meshEntry: MeshEntry) {
         for entity in meshEntry.entities {
             if let node = entity.components[GodotNode.self]?.node3D {
-                let _ = self._updateModelEntityMesh(node, entity)
+                let _ = _updateModelEntityMesh(node: node, existingEntity: entity)
             }
         }
     }
     
-    private func _updateModelEntityMesh(_ node: Node, _ existingEntity: ModelEntity?) -> ModelEntity? {
+    private func _updateModelEntityMesh(node: Node, existingEntity: Entity?, cb: ((Entity?) -> Void)? = nil) -> Entity {
         var mesh: SwiftGodot.Mesh? = nil
         var materials: [SwiftGodot.Material]? = nil
         var skeleton3D: SwiftGodot.Skeleton3D? = nil
@@ -486,77 +489,80 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         
         // Create a ModelEntity if we have a mesh.
-        var entity: ModelEntity? = nil
+        var entity: Entity
         if let mesh, let node3D = node as? Node3D {
             let meshCreationInfo = MeshCreationInfo(godotMesh: mesh, godotSkeleton: skeleton3D, flipFacesIfNoIndexBuffer: flipFacesIfNoIndexBuffer, instanceTransforms: instanceTransforms)
-            
-            if let existingEntity, let oldMeshEntry = existingEntity.components[GodotNode.self]?.meshEntry {
-                oldMeshEntry.entities.remove(existingEntity)
+            if let oldMeshEntry = existingEntity?.components[GodotNode.self]?.meshEntry {
+                if let existingModelEntity = existingEntity as? ModelEntity {
+                    oldMeshEntry.entities.remove(existingModelEntity)
+                }
             }
             
-            if let rkMeshEntry = createRealityKitMesh(debugName: String(node3D.name), meshCreationInfo: meshCreationInfo, onResourceChange: _onMeshResourceChanged) {
-                let rkMaterials = (materials?.count ?? 0 == 0)
-                    ? [SimpleMaterial(color: .white, isMetallic: false)]
-                    : materials!.map { resourceCache.rkMaterial(forGodotMaterial: $0) }
-                if let existingEntity {
-                    existingEntity.model = .init(mesh: rkMeshEntry.meshResource, materials: rkMaterials)
-                    entity = existingEntity
-                } else {
-                    entity = ModelEntity(mesh: rkMeshEntry.meshResource, materials: rkMaterials)
+            entity = existingEntity ?? ModelEntity()
+            if existingEntity != nil && (existingEntity as? ModelEntity) == nil {
+                logError("Expected this to be a ModelEntity: \(String(describing: entity))")
+            }
+            
+            createRealityKitMesh(entity: entity,
+                                 debugName: String(node3D.name),
+                                 meshCreationInfo: meshCreationInfo,
+                                 onResourceChange: _onMeshResourceChanged,
+                                 onMeshEntry: { [weak self] rkMeshEntry in
+                guard let self, let rkMeshEntry else { return }
+                let rkMaterials = (materials?.count ?? 0 == 0) ? [SimpleMaterial(color: .white, isMetallic: false)] : materials!.map { self.resourceCache.rkMaterial(forGodotMaterial: $0) }
+                if let modelEntity = entity as? ModelEntity {
+                    modelEntity.model = .init(mesh: rkMeshEntry.meshResource, materials: rkMaterials)
                 }
-                
-                if let entity {
-                    rkMeshEntry.entities.insert(entity)
-                }
+                cb?(entity)
+            })
+        } else {
+            entity = existingEntity ?? Entity()
+            cb?(entity)
+        }
+    
+        if let node3D = node as? Node3D {
+            // Establish a link between the original Godot Node3D and the RK Entity.
+            entity.components.getOrMake { (godotNode: inout GodotNode) in
+                godotNode.node3D = node3D
             }
         }
         
-        if let entity {
-            if let node3D = node as? Node3D {
-                // Establish a link between the original Godot Node3D and the RK Entity.
-                entity.components.getOrMake { (godotNode: inout GodotNode) in
-                    godotNode.node3D = node3D
-                }
-            }
-            
-            // Set grounding shadows on entities with a mesh (unless a metadata entry for 'grounding_shadow' exists and is false
-            if mesh != nil && node.getMetaBool(grounding_shadow, defaultValue: true) {
-                entity.components.set(GroundingShadowComponent(castsShadow: true))
-            } else {
-                entity.components.remove(GroundingShadowComponent.self)
-            }
+        // Set grounding shadows on entities with a mesh (unless a metadata entry for 'grounding_shadow' exists and is false
+        if mesh != nil && node.getMetaBool(grounding_shadow, defaultValue: true) {
+            entity.components.set(GroundingShadowComponent(castsShadow: true))
+        } else {
+            entity.components.remove(GroundingShadowComponent.self)
         }
         
         return entity
-        
     }
     
     private func _createRealityKitEntityForNewNode(_ node: SwiftGodot.Node) -> Entity {
+        let inputRayPickable: Bool = (node as? CollisionObject3D)?.inputRayPickable ?? false
+        // If there's a metadata entry for 'hover_effect' with the boolean value of true, we add a RealityKit HoverEffectComponent.
+        let hoverEffect: Bool = inputRayPickable && node.getMetaBool(hover_effect, defaultValue: false)
+        
         // Construct a ModelEntity with our mesh data if we have one.
-        let entity = _updateModelEntityMesh(node, nil) ?? Entity()
+        let entity = _updateModelEntityMesh(node: node, existingEntity: nil) { entity in
+            if inputRayPickable, let entity {
+                DispatchQueue.main.async {
+                    updateCollision(entity: entity)
+                }
+            }
+        }
         entity.name = "\(node.name)"
+        if inputRayPickable {
+            entity.components.set(InputTargetComponent())
+            if hoverEffect {
+                entity.components.set(HoverEffectComponent())
+            }
+        }
+        
         let instanceID = Int64(node.getInstanceId())
         godotInstanceIDToEntity[instanceID] = entity
         godotEntitiesParent.addChild(entity)
         
         // Setup a node to be tappable with the `InputTargetComponent()` if necessary..
-        // TODO: we could have more fine-graned input ray pickable shapes based on the Godot collision shapes. Currently we just put a box around the visual bounds.
-        let inputRayPickable: Bool = (node as? CollisionObject3D)?.inputRayPickable ?? false
-        if inputRayPickable {
-            DispatchQueue.main.async { // TODO: this doesn't need to be dispatched unitl later anymore.
-                let bounds = entity.visualBounds(relativeTo: entity.parent)
-                let collisionShape: RealityKit.ShapeResource = .generateBox(size: bounds.extents)
-                var collision = CollisionComponent(shapes: [collisionShape])
-                collision.filter = .init(group: [], mask: []) // disable for collision detection
-                entity.components.set(InputTargetComponent())
-                
-                // If there's a metadata entry for 'hover_effect' with the boolean value of true, we add a RealityKit HoverEffectComponent.
-                if node.getMetaBool(hover_effect, defaultValue: false) {
-                    entity.components.set(HoverEffectComponent())
-                }
-                entity.components.set(collision)
-            }
-        }
         
         // Finally, initialize the position/rotation/scale.
         if let node3D = node as? Node3D {
@@ -735,7 +741,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         arUpdate()
         
         // Update skeletons
-        do {
+        if !skeletonsToUpdate.isEmpty {
             let skeletons = Array(skeletonsToUpdate.keys)
             var results = Array(Skeleton3D.getMultipleSkeletonBonePoses(skeletons: ObjectCollection(skeletons)))
             // returns [stride, num_bones_1, transform_ptr_1, num_bones_2, transform_ptr_2] where each ptr points to a block of transforms num_bones long, `stride` bytes apart
@@ -1032,4 +1038,27 @@ extension Transform3D {
     init(_ c: CodableTransform3D) {
         self.init(xAxis: .init(c.basis0), yAxis: .init(c.basis1), zAxis: .init(c.basis2), origin: .init(c.origin))
     }
+}
+
+func updateCollision(entity: Entity, count: Int = 0) {
+    if !entity.components.has(InputTargetComponent.self) {
+        return
+    }
+    
+    let bounds = entity.visualBounds(relativeTo: entity.parent)
+    if bounds.isEmpty {
+        if count > 5000 {
+            print("BAILING FOR COLLISION ON", entity.name)
+        } else {
+            DispatchQueue.main.async {
+                updateCollision(entity: entity, count: count + 1)
+            }
+        }
+        return
+    }
+    
+    // TODO: we could have more fine-graned input ray pickable shapes based on the Godot collision shapes. Currently we just put a box around the visual bounds.
+    var collision = CollisionComponent(shapes: [.generateBox(size: bounds.extents)])
+    collision.filter = .init(group: [], mask: []) // disable for collision detection
+    entity.components.set(collision)
 }

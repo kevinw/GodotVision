@@ -207,23 +207,45 @@ class MeshEntry {
 
 private var meshCache: [MeshCreationInfo: MeshEntry] = [:] // TODO @Leak
 
-func createRealityKitMesh(debugName: String, 
+func createRealityKitMesh(entity: Entity,
+                          debugName: String,
                           meshCreationInfo: MeshCreationInfo,
-                          onResourceChange: @escaping (MeshEntry) -> Void) -> MeshEntry?
-{
+                          onResourceChange: @escaping (MeshEntry) -> Void,
+                          onMeshEntry: @escaping (MeshEntry?) -> Void,
+                          verbose: Bool = false
+) {
     if let meshEntry = meshCache[meshCreationInfo] {
-        return meshEntry
+        return cb(meshEntry)
     }
     
-    var meshResource: MeshResource? = nil
     doLoggingErrors {
         let meshContents = try meshContents(debugName: debugName, meshCreationInfo: meshCreationInfo, verbose: false)
-        meshResource = try MeshResource.generate(from: meshContents)
+        #if true
+        Task(priority: .high) {
+            let meshResource = try await MeshResource(from: meshContents)
+            await MainActor.run {
+                onMeshResource(meshResource: meshResource)
+            }
+        }
+        #else
+        let meshResource = try MeshResource.generate(from: meshContents)
+        onMeshResource(meshResource: meshResource)
+        #endif
     }
+    
+    @Sendable func cb(_ meshEntry: MeshEntry?) {
+        if let meshEntry, let modelEntity = entity as? ModelEntity {
+            meshEntry.entities.insert(modelEntity)
+        }
+        if verbose {
+            print("calling onMeshEntry \(debugName)")
+        }
+        onMeshEntry(meshEntry)
+    }
+    
 
-    if let meshResource {
+    @Sendable func onMeshResource(meshResource: MeshResource) {
         let meshEntry = MeshEntry(meshResource: meshResource)
-
         if !meshCreationInfo.godotMesh.getMetaBool("_didRegisterChanged", defaultValue: false) {
             meshCreationInfo.godotMesh.setMeta(name: "_didRegisterChanged", value: Variant(true))
             meshCreationInfo.godotMesh.changed.connect {
@@ -231,12 +253,11 @@ func createRealityKitMesh(debugName: String,
                 onResourceChange(meshEntry)
             }
         }
-
+        
         meshCache[meshCreationInfo] = meshEntry
-        return meshEntry
+        cb(meshEntry)
     }
     
-    return nil
 }
     
 private func getInverseBindPoseMatrix(skeleton: Skeleton3D, boneIdx: Int32) -> simd_float4x4 {
@@ -318,7 +339,6 @@ private func meshContents(debugName: String,
         rkSkeleton = newSkeleton
         newContents.skeletons = MeshSkeletonCollection([newSkeleton])
     }
-    
 
     var meshParts: [MeshResource.Part] = []
     for surfIdx in 0..<mesh.getSurfaceCount() {
@@ -450,7 +470,7 @@ private func meshContents(debugName: String,
             case .packedFloat32Array:
                 if let weights = weightsVariant.cast(as: PackedFloat32Array.self, debugName: "ARRAY_WEIGHTS") {
                     if jointInfluences.count <= weights.count {
-                        weights.enumerated().forEach { (idx, weight) in jointInfluences[idx].weight = weight }
+                        weights.bufPtr().enumerated().forEach { (idx, weight) in jointInfluences[idx].weight = weight }
                     } else {
                         logError("more weights than bone indices")
                     }
@@ -458,7 +478,7 @@ private func meshContents(debugName: String,
             case .packedFloat64Array:
                 if let weights = weightsVariant.cast(as: PackedFloat64Array.self, debugName: "ARRAY_WEIGHTS") {
                     if jointInfluences.count <= weights.count {
-                        weights.enumerated().forEach { (idx, weight) in jointInfluences[idx].weight = Float(weight) } // note: precision loss from 64 to 32 bit
+                        weights.bufPtr().enumerated().forEach { (idx, weight) in jointInfluences[idx].weight = Float(weight) } // note: precision loss from 64 to 32 bit
                     } else {
                         logError("more weights than bone indices")
                     }
