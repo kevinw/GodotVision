@@ -64,7 +64,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
     private var volumeCameraBoxSize: simd_float3 = .one
     private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealityKit volume is, in meters, as an application in the user's AR space.
-    private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
+    private var godotToRealityKitRatio: Float = 1.0 // default ratio - this is adjusted when realityKitVolumeSize size changes
     
     private var projectContext: GodotProjectContext = .init()
     private var skeletonsToUpdate: Dictionary<Skeleton3D, [ModelEntity]> = .init()
@@ -600,6 +600,68 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
+    // idk why i can't use the stuff defined in GeometryUtilities
+    func godotQuatFromTransform(_ transform: simd_float4x4) -> SwiftGodot.Quaternion {
+        let col0 = simd_float3(x: transform[0].x, y: transform[0].y, z: transform[0].z)
+        let col1 = simd_float3(x: transform[1].x, y: transform[1].y, z: transform[1].z)
+        let col2 = simd_float3(x: transform[2].x, y: transform[2].y, z: transform[2].z)
+        let rotation_matrix = matrix_float3x3(col0, col1, col2)
+        let rotation = simd_quatf(rotation_matrix)
+        return SwiftGodot.Quaternion(rotation)
+    }
+    
+    public func addOrUpdateReconstructionMesh(id: UUID, vertices: [simd_float3], faces: [UInt16], transform: simd_float4x4) {
+        // position
+        let godot_vertices = SwiftGodot.GArray()
+        vertices.forEach({ item in
+            godot_vertices.append(value: Variant(SwiftGodot.Vector3(item)))
+        })
+        
+        let godot_faces = SwiftGodot.GArray()
+        faces.forEach({ item in
+            godot_faces.append(value: Variant(Int(item)))
+        })
+        
+        let position = SwiftGodot.Vector3(x: transform[3].x, y: transform[3].y, z: transform[3].z)
+        let godot_quat = godotQuatFromTransform(transform)
+        
+        if let planesNode = sceneTree?.root?.getNode(path: "/root/main/reconstruction_meshes") {
+            planesNode.call(method: "add_or_update_reconstruction_mesh", Variant(id.uuidString), Variant(godot_vertices), Variant(godot_faces), Variant(position), Variant(godot_quat))
+        }
+    }
+    
+    public func addOrUpdatePlane(id: UUID, vertices: [simd_float3], faces: [UInt16], transform: simd_float4x4) {
+        // position
+        let godot_vertices = SwiftGodot.GArray()
+        vertices.forEach({ item in
+            godot_vertices.append(value: Variant(SwiftGodot.Vector3(item)))
+        })
+        
+        let godot_faces = SwiftGodot.GArray()
+        faces.forEach({ item in
+            godot_faces.append(value: Variant(Int(item)))
+        })
+        
+        let position = SwiftGodot.Vector3(x: transform[3].x, y: transform[3].y, z: transform[3].z)
+        let godot_quat = godotQuatFromTransform(transform)
+        
+        if let planesNode = sceneTree?.root?.getNode(path: "/root/main/planes") {
+            planesNode.call(method: "add_or_update_plane", Variant(id.uuidString), Variant(godot_vertices), Variant(godot_faces), Variant(position), Variant(godot_quat))
+        }
+    }
+    
+    public func removeMesh(id: UUID) {
+        if let meshesNode = sceneTree?.root?.getNode(path: "/root/main/reconstruction_meshes") {
+            meshesNode.call(method: "remove_mesh", Variant(id.uuidString))
+        }
+    }
+    
+    public func removePlane(id: UUID) {
+        if let planesNode = sceneTree?.root?.getNode(path: "/root/main/planes") {
+            planesNode.call(method: "remove_plane", Variant(id.uuidString))
+        }
+    }
+    
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
 
@@ -774,8 +836,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             godotEntitiesParent.transform = .init(volumeCamera.globalTransform.affineInverse())
         }
         
-        let newScale = godotToRealityKitRatio * extraScale
-        godotEntitiesScale.scale = .one * newScale
+        godotEntitiesScale.scale = .one
         godotEntitiesScale.position = extraOffset
     }
     
