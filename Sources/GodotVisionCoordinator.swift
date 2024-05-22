@@ -48,6 +48,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     public var extraOffset: simd_float3 = .zero
     @Published public var paused: Bool = false
 
+    public var customMaterial: RealityKit.Material = SimpleMaterial(color: .white, isMetallic: false)
+    
     private var eventSubscription: EventSubscription? = nil
     private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
     private var nodeAddedToken: SwiftGodot.Object? = nil
@@ -443,6 +445,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         return audioResource
     }
     
+    public func setCustomMaterial(_ material: ShaderGraphMaterial) {
+        customMaterial = material
+    }
+    
     private func _onMeshResourceChanged(meshEntry: MeshEntry) {
         for entity in meshEntry.entities {
             if let node = entity.components[GodotNode.self]?.node3D {
@@ -509,7 +515,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                                  onResourceChange: _onMeshResourceChanged,
                                  onMeshEntry: { [weak self] rkMeshEntry in
                 guard let self, let rkMeshEntry else { return }
-                let rkMaterials = (materials?.count ?? 0 == 0) ? [SimpleMaterial(color: .white, isMetallic: false)] : materials!.map { self.resourceCache.rkMaterial(forGodotMaterial: $0) }
+                let rkMaterials = [customMaterial]
                 if let modelEntity = entity as? ModelEntity {
                     modelEntity.model = .init(mesh: rkMeshEntry.meshResource, materials: rkMaterials)
                 }
