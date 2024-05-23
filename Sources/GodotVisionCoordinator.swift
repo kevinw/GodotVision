@@ -1043,15 +1043,16 @@ func updateCollision(entity: Entity, count: Int = 0) {
         return
     }
     
-    let bounds = entity.visualBounds(relativeTo: entity.parent)
+    let bounds = entity.visualBounds(relativeTo: entity.parent, excludeInactive: true)
     if bounds.isEmpty {
-        if count > 5000 {
-            print("BAILING FOR COLLISION ON", entity.name)
-        } else {
-            DispatchQueue.main.async {
+        if entity.parent != nil, count < 500 {
+            // HACK: Now that we're generating meshes asynchronously, RealityKit doesn't give a "Correct" visual bounds until sometime after the mesh actually becomes visible.
+            // If in `updateCollision` we generate the collision shapes directly from the Godot collision shapes, we don't need a random retry here.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 0.01...0.5)) {
                 updateCollision(entity: entity, count: count + 1)
             }
         }
+        
         return
     }
     
