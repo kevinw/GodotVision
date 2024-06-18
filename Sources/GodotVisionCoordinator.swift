@@ -600,9 +600,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             
             let skeleton = node3D != nil ? getSkeletonNode(node: node3D!, entity: entity) : nil
             if let node3D, let skeleton {
-                print("node3D", node3D, "skeleton", String(describing: skeleton))
-            }
-            if let node3D, let skeleton {
                 entity.components.set(GodotNode(node3D: node3D))
                 if let modelEntity = entity as? ModelEntity {
                     if skeletonsToUpdate[skeleton] == nil {
@@ -994,7 +991,6 @@ extension Entity.ComponentSet {
         }
     }
 }
-
 
 import simd
 public struct SpatialDragParams: Codable {
