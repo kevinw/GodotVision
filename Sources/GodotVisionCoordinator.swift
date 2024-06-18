@@ -575,30 +575,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         
         return entity
     }
-
-    private func updateSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) {
-        // TODO: we might be able to register for an event when the bone poses change, and respond to that, instead of doing a per frame check. @Perf
-        if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
-            if let meshInstance3D = node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
-                var transforms: [Transform] = []
-                var jointNames: [String] = []
-                
-                for boneIdx in 0..<skeleton.getBoneCount() {
-                    transforms.append(Transform(skeleton.getBonePose(boneIdx: boneIdx)))
-                    if DO_EXTRA_DEBUGGING {
-                        jointNames.append(skeleton.getBoneName(boneIdx: boneIdx))
-                    }
-                }
-                
-                modelEntity.jointTransforms = transforms
-                if DO_EXTRA_DEBUGGING {
-                    if jointNames != modelEntity.jointNames {
-                        logError("joint names do not match \(jointNames) \(modelEntity.jointNames)")
-                    }
-                }
-            }
-        }
-    }
     
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
@@ -620,7 +596,13 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             
             let entity = _createRealityKitEntityForNewNode(node)
-            if let node3D = node as? Node3D, let skeleton = getSkeletonNode(node: node3D, entity: entity) {
+            let node3D = node as? Node3D
+            
+            let skeleton = node3D != nil ? getSkeletonNode(node: node3D!, entity: entity) : nil
+            if let node3D, let skeleton {
+                print("node3D", node3D, "skeleton", String(describing: skeleton))
+            }
+            if let node3D, let skeleton {
                 entity.components.set(GodotNode(node3D: node3D))
                 if let modelEntity = entity as? ModelEntity {
                     if skeletonsToUpdate[skeleton] == nil {
@@ -798,7 +780,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let entity = value.entity
         
         // See if this Node has a 'drag' signal
-        guard let obj = self.godotInstanceFromRealityKitEntityID(entity.id) else { return }
+        guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
         if !obj.hasSignal(spatial_drag) {
             return
         }
@@ -976,11 +958,20 @@ struct GodotVisionDraggable: Component {
     }
 }
     
-private func getSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity) -> Skeleton3D? {
-    if let modelEntity = entity as? ModelEntity, let model = modelEntity.model, let _ = model.mesh.contents.skeletons.first(where: { _ in true /* TODO: hack, no */ }) {
-        if let meshInstance3D = node as? MeshInstance3D, let skeleton = meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D {
-            return skeleton
-        }
+private func getSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity, verbose: Bool = false) -> Skeleton3D? {
+    guard let _ = entity as? ModelEntity else {
+        if verbose { print("RK entity is not a ModelEntity") }
+        return nil
+    }
+    
+    guard let meshInstance3D = node as? MeshInstance3D else {
+        if verbose { print("the godot Node is not a MeshInstance3D") }
+        return nil
+    }
+    
+    let skeletonNodePath = meshInstance3D.skeleton
+    if !skeletonNodePath.isEmpty(), let skeleton = meshInstance3D.getNode(path: skeletonNodePath) as? Skeleton3D {
+        return skeleton
     }
     
     return nil
