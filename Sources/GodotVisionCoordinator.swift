@@ -25,6 +25,7 @@ let DEFAULT_PROJECT_FOLDER_NAME = "Godot_Project"
 // StringNames for interacting with Godot API efficiently.
 let spatial_drag: StringName     = "spatial_drag"
 let spatial_magnify: StringName   = "spatial_magnify"
+let spatial_rotate3D: StringName = "spatial_rotate3D"
 let gv_auto_prepare: StringName  = "gv.auto_prepare"
 let hover_effect: StringName     = "hover_effect"
 let grounding_shadow: StringName = "grounding_shadow"
@@ -617,9 +618,18 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 didReceiveGodotVolumeCamera(node3D)
             }
 
+            // MARK: - Create gesture context components on applicable nodes
             if node.hasSignal(spatial_drag) {
                 // TODO: check if it's a collision object? warn if not?
                 entity.components.set(GodotVisionDraggable())
+            }
+            if node.hasSignal(spatial_magnify) {
+                // TODO: check if it's a collision object? warn if not?
+                entity.components.set(GodotVisionMagnifiable())
+            }
+            if node.hasSignal(spatial_rotate3D) {
+                // TODO: check if it's a collision object? warn if not?
+                entity.components.set(GodotVisionRotateable())
             }
 
             if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
@@ -851,86 +861,136 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     func receivedMagnify(_ value: EntityTargetValue<MagnifyGesture.Value>, ended: Bool = false) {
         let entity = value.entity
 
-        // See if this Node has a 'drag' signal
+        // See if this Node has a 'magnify' signal
         guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
-        if !obj.hasSignal(spatial_drag) {
+        if !obj.hasSignal(spatial_magnify) {
             return
         }
 
-        guard var dragCtx = entity.components[GodotVisionDraggable.self] else { return }
-        defer { entity.components.set(dragCtx) }
-        
-        var origScale = dragCtx.originalScale
+        guard var magCtx = entity.components[GodotVisionMagnifiable.self] else { return }
+        defer { entity.components.set(magCtx) }
+
+        var origScale = magCtx.originalScale
         var began = false
         if origScale == nil {
-            origScale = entity.scale(relativeTo: nil) //entity.transform.scale
-            dragCtx.originalScale = origScale
+            origScale = entity.scale(relativeTo: nil)
+            magCtx.originalScale = origScale
             began = true
         }
 
-        var origPos = dragCtx.originalPosition
+        var origPos = magCtx.originalPosition
         if origPos == nil {
             origPos = entity.position(relativeTo: nil)
-            dragCtx.originalPosition = origPos
+            magCtx.originalPosition = origPos
         }
 
-        var origRotation = dragCtx.originalRotation
+        var origRotation = magCtx.originalRotation
         if origRotation == nil {
             origRotation = Rotation3D(entity.orientation(relativeTo: nil))
-            dragCtx.originalRotation = origRotation
+            magCtx.originalRotation = origRotation
         }
-        
-        // Scale matrix
-        //var newOrientation = entity.orientation(relativeTo: nil)
-        //let localToScene = value.transform(from: .local, to: .scene) // an AffineTransform3D which maps .local to .scene
-        //if let startInputDevicePose3D = value.startInputDevicePose3D,
-        //    let inputDevicePose3D = value.inputDevicePose3D,
-        //   let startRotation = (localToScene * AffineTransform3D(pose: startInputDevicePose3D)).rotation,
-        //   let currentRotation = (localToScene * AffineTransform3D(pose: inputDevicePose3D)).rotation
-        //{
-        //    // "add" the original pose and the delta of the (current pose - start pose)
-        //    newOrientation = .init((currentRotation * startRotation.inverse) * origRotation!)
-        //}
-        print("DEBUG: \(entity.transform.scale)")
 
-        var entityScale = origScale // TODO: test magnifying nodes with different scales to make sure this is right
-        let scale = entityScale
+        var entityScale = origScale
         
-        //print("Original Scale is \(origScale)")
-        print("Magnification Value is: \(value.magnification)")
+        let localToScene = value.transform(from: .local, to: .scene)
         
-        entityScale!.x *= Float(value.magnification)
-        entityScale!.y *= Float(value.magnification)
-        entityScale!.z *= Float(value.magnification)
         
-        let newScale = entityScale
+        let magnification = Float(value.magnification)
+        let newScale = origScale! * magnification
+
+        let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: origScale!, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
+        let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: newScale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
         
-        //print("New Scale is \(newScale)")
-        
-        let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale!, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
-        //print("Start Global Transform: \(gdStartGlobalTransform)")
-        let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: newScale!, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
         let phase = ended ? "ended" : (began ? "began" : "changed")
-        //print("      Global Transform: \(gdGlobalTransform)")
 
-        // pass a dictionary of values to the drag signal
+        // pass a dictionary of values to the signal
         let dict: GDictionary = .init()
         dict["global_transform"] = Variant(gdGlobalTransform)
         dict["start_global_transform"] = Variant(gdStartGlobalTransform)
         dict["phase"] = Variant(phase)
 
-        obj.emitSignal(spatial_drag, Variant(dict))
+        obj.emitSignal(spatial_magnify, Variant(dict))
 
         if shareModel.automaticallyShareInput, let node = obj as? Node {
             let nodePathString = node.getPath().description
 
             let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
-            let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_drag", params: params)
+            let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_magnify", params: params)
             self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
         }
 
         if ended {
-            dragCtx.reset()
+            magCtx.reset()
+        }
+    }
+    
+    var rotateState = "inactive"
+    
+    /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
+    func receivedRotate3D(_ value: EntityTargetValue<RotateGesture3D.Value>, ended: Bool = false) {
+        let entity = value.entity
+
+        // See if this Node has a 'rotate3D' signal
+        guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
+        if !obj.hasSignal(spatial_rotate3D) {
+            return
+        }
+
+        guard var rotCtx = entity.components[GodotVisionRotateable.self] else { return }
+        defer { entity.components.set(rotCtx) }
+
+        var origPos = rotCtx.originalPosition
+        var began = false
+        if origPos == nil {
+            origPos = entity.position(relativeTo: nil)
+            rotCtx.originalPosition = origPos
+            began = true
+        }
+
+        var origRotation = rotCtx.originalRotation
+        if origRotation == nil {
+            origRotation = Rotation3D(entity.orientation(relativeTo: nil))
+            rotCtx.originalRotation = origRotation
+        }
+
+        // Rotation
+        let rotation = value.rotation
+        let flippedRotation = Rotation3D(angle: rotation.angle,
+                                         axis: RotationAxis3D(x: -rotation.axis.x,
+                                                              y: rotation.axis.y,
+                                                              z: -rotation.axis.z))
+        
+        var newOrientation = entity.orientation(relativeTo: nil)
+        let startRotation = origRotation
+
+        newOrientation = .init(flippedRotation * startRotation!)
+
+        let scale = entity.scale(relativeTo: nil)
+
+        let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
+        let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: newOrientation, translation: .init(origPos!)), from: nil))
+        let phase = ended ? "ended" : (began ? "began" : "changed")
+
+        // pass a dictionary of values to the drag signal
+        let dict: GDictionary = .init()
+        let source = "rotate3D"
+        dict["global_transform"] = Variant(gdGlobalTransform)
+        dict["start_global_transform"] = Variant(gdStartGlobalTransform)
+        dict["phase"] = Variant(phase)
+        dict["source"] = Variant(source)
+
+        obj.emitSignal(spatial_rotate3D, Variant(dict))
+
+        if shareModel.automaticallyShareInput, let node = obj as? Node {
+            let nodePathString = node.getPath().description
+
+            let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
+            let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_rotate3D", params: params)
+            self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
+        }
+
+        if ended {
+            rotCtx.reset()
         }
     }
 
@@ -972,6 +1032,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     /// A visionOS drag has ended. We emit a signal to inform Godot land.
     func receivedMagnifyEnded(_ value: EntityTargetValue<MagnifyGesture.Value>) {
         receivedMagnify(value, ended: true)
+    }
+    
+    /// A visionOS drag has ended. We emit a signal to inform Godot land.
+    func receivedRotate3DEnded(_ value: EntityTargetValue<RotateGesture3D.Value>) {
+        receivedRotate3D(value, ended: true)
     }
 
     /// RealityKit has received a SpatialTapGesture in the RealityView
@@ -1040,6 +1105,30 @@ class GodotProjectContext {
 
 
 struct GodotVisionDraggable: Component {
+    var originalPosition: simd_float3? = nil
+    var originalRotation: Rotation3D? = nil
+    var originalScale: SIMD3<Float>? = nil
+
+    mutating func reset() {
+        originalPosition = nil
+        originalRotation = nil
+        originalScale = nil
+    }
+}
+
+struct GodotVisionMagnifiable: Component {
+    var originalPosition: simd_float3? = nil
+    var originalRotation: Rotation3D? = nil
+    var originalScale: SIMD3<Float>? = nil
+
+    mutating func reset() {
+        originalPosition = nil
+        originalRotation = nil
+        originalScale = nil
+    }
+}
+
+struct GodotVisionRotateable: Component {
     var originalPosition: simd_float3? = nil
     var originalRotation: Rotation3D? = nil
     var originalScale: SIMD3<Float>? = nil
