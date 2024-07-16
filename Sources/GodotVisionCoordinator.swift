@@ -1029,12 +1029,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         receivedDrag(value, ended: true)
     }
 
-    /// A visionOS drag has ended. We emit a signal to inform Godot land.
+    /// A visionOS magnify has ended. We emit a signal to inform Godot land.
     func receivedMagnifyEnded(_ value: EntityTargetValue<MagnifyGesture.Value>) {
         receivedMagnify(value, ended: true)
     }
     
-    /// A visionOS drag has ended. We emit a signal to inform Godot land.
+    /// A visionOS rotate3D has ended. We emit a signal to inform Godot land.
     func receivedRotate3DEnded(_ value: EntityTargetValue<RotateGesture3D.Value>) {
         receivedRotate3D(value, ended: true)
     }
