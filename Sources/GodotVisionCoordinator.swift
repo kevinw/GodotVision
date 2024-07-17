@@ -1,7 +1,7 @@
 /**
- 
+
 Mirror Node3Ds from Godot to RealityKit.
- 
+
  */
 
 //  Created by Kevin Watters on 1/3/24.
@@ -24,6 +24,8 @@ let DEFAULT_PROJECT_FOLDER_NAME = "Godot_Project"
 
 // StringNames for interacting with Godot API efficiently.
 let spatial_drag: StringName     = "spatial_drag"
+let spatial_magnify: StringName   = "spatial_magnify"
+let spatial_rotate3D: StringName = "spatial_rotate3D"
 let gv_auto_prepare: StringName  = "gv.auto_prepare"
 let hover_effect: StringName     = "hover_effect"
 let grounding_shadow: StringName = "grounding_shadow"
@@ -38,12 +40,12 @@ struct AudioStreamPlay {
 
 public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var godotInstanceIDToEntity: [Int64: Entity] = [:]
-    
+
     var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
     private var godotEntitiesScale = Entity() /// Applies a global scale to the godot scene based on the volume size and the godot camera volume.
-    
+
     var shareModel = ShareModel()
-    
+
     public var extraScale: Float = 1.0
     public var extraOffset: simd_float3 = .zero
     @Published public var paused: Bool = false
@@ -60,20 +62,20 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var audioStreamPlays: [AudioStreamPlay] = []
     private var audioPlaybackControllers: [AudioStreamPlayer3D: AudioPlaybackController] = [:]
     private var _audioResources: [String: AudioFileResource] = [:]
-    
+
     private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
     private var volumeCameraBoxSize: simd_float3 = .one
     private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealityKit volume is, in meters, as an application in the user's AR space.
     private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
-    
+
     private var projectContext: GodotProjectContext = .init()
     private var skeletonsToUpdate: Dictionary<Skeleton3D, [ModelEntity]> = .init()
 
     var ar: ARState = .init() /// State for AR functionality.
-    
+
     // explanation in comment below
     let volumeRatioDebouncer = Debouncer(delay: 2)
-    
+
     // we expect changeScaleIfVolumeSizeChanged to be called...
     // - from didReceiveGodotVolumeCamera, when Volume Camera node is first recognized
     // - from SwiftUI RealityView update method in ContentView
@@ -93,7 +95,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
         }
     }
-    
+
     public func reloadScene() {
         print("reloadScene currently doesn't work for loading a new version of the scene saved from the editor, since Xcode copies the Godot_Project into the application's bundle only once at build time.")
         resetRealityKit()
@@ -107,30 +109,30 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     public func changeSceneToFile(atResourcePath sceneResourcePath: String) {
         guard let sceneTree else { return }
         print("CHANGING SCENE TO", sceneResourcePath)
-        
+
         self.receivedRootNode = false // we will "regrab" the root node and do init stuff with it again.
-        
+
         let result = sceneTree.changeSceneToFile(path: sceneResourcePath)
         if SwiftGodot.GodotError.ok != result {
             logError("changeSceneToFile result was not ok: \(result)")
         }
     }
-    
+
     func initGodot() {
         var args = [
             ".",  // TODO: not sure about this, I think it's the "project directory" -- ios build command line eats the first argument.
-            
+
             // We want Godot to run in headless mode, meaning: don't open windows, don't render anything, don't play sounds.
             "--headless",
-            
+
             // The GodotVision Godot fork sees this argument and assumes that we will tick the main loop manually.
             "--runLoopHandledByHost"
         ]
-        
+
         // Here we tell Godot where to find our Godot project.
-        
+
         args.append(contentsOf: ["--path", projectContext.getProjectDir()])
-        
+
         // This is the SwiftGodotKit "entry" point
         runGodot(args: args,
                  initHook: initHook,
@@ -140,26 +142,26 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                  },
                  verbose: true)
     }
-    
+
     private func receivedSceneTree(sceneTree: SwiftGodot.SceneTree) {
         // print("receivedSceneTree", sceneTree)
         // print("loadSceneCallback", sceneTree.getInstanceId(), sceneTree)
         // print(sceneTree.currentScene?.sceneFilePath)
-        
+
         nodeTransformsChangedToken     = sceneTree.nodeTransformsChanged.connect(onNodeTransformsChanged)
         nodeAddedToken                 = sceneTree.nodeAdded.connect(onNodeAdded)
         nodeRemovedToken               = sceneTree.nodeRemoved.connect(onNodeRemoved)
         audioStreamPlayerPlaybackToken = sceneTree.audioStreamPlayerPlayback.connect(onAudioStreamPlayerPlayback)
-        
+
         self.sceneTree = sceneTree
-        
+
         #if false // show the nodes in the RealityKit hierarchy
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             print("RK HIERARCHY-------")
             printEntityTree(self.godotEntitiesParent)
         }
         #endif
-        
+
         #if false // show the nodes in the Godot hierarchy
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             print("GODOT HIERARCHY-----")
@@ -167,7 +169,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         #endif
     }
-    
+
     struct AudioToProcess {
         var instanceId: Int64
         var state: Int64
@@ -175,7 +177,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         var from_pos: Double
     }
     private var audioToProcess: [AudioToProcess] = []
-    
+
     // callback for custom signal on SceneTree from GodotVision's libgodot fork which gets called for all AudioStreamPlayer[3D] play/stop
     private func onAudioStreamPlayerPlayback(obj: SwiftGodot.Object, state: Int64, flags: Int64, from_pos: Double) {
         // TODO: once we fix the casting of Nodes from signal calls, we don't need audioToProcess at all. but until then, obj as? AudioStreamPlayer3D will always fail from within this method. :SignalsWithNodeArguments
@@ -184,7 +186,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                                     flags: flags,
                                     from_pos: from_pos))
     }
-    
+
     private func onNodeRemoved(_ node: SwiftGodot.Node) {
         let _ = godotInstanceIDsRemovedFromTree.insert(node.getInstanceId())
         if let node3D = node as? Node3D {
@@ -194,37 +196,37 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
         }
     }
-    
+
     private func onNodeTransformsChanged(_ packedByteArray: PackedByteArray) {
         guard let data = packedByteArray.asDataNoCopy() else {
             return
         }
-        
+
         struct NodeData {
             enum Flags: UInt32 {
                 case VISIBLE = 1
             }
-            
+
             // We receive a PackedByteArray of these structs from a special Godot SceneTree signal created for GodotVision. See "node_transforms_changed" in the Godot source.
             // The idea is, for performance, to just receive an array of plain data structs, and not incur the costs of gdextension method calls for each Node.
-            
+
             var objectID: Int64
             var parentID: Int64
             var pos: simd_float4
             var rot: simd_quatf
             var scl: simd_float4
-            
+
             var nativeHandle: UnsafeRawPointer
             var flags: UInt32
             var pad0: Float
         }
-        
+
         data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
             ptr.withMemoryRebound(to: NodeData.self) { nodeDatas in
                 _receivedNodeDatas(nodeDatas)
             }
         }
-        
+
         func _receivedNodeDatas(_ nodeDatas: UnsafeBufferPointer<NodeData>) {
 #if false
             var transformSetCount = 0
@@ -238,33 +240,33 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 #endif
             for nodeData in nodeDatas {
                 if nodeData.objectID == 0 { continue }
-                
+
                 guard let entity = godotInstanceIDToEntity[nodeData.objectID] else {
                     continue
                 }
-                
+
                 // Update Transform
                 entity.transform = .init(scale: .init(nodeData.scl.x, nodeData.scl.y, nodeData.scl.z),
                                          rotation: nodeData.rot,
                                          translation: .init(nodeData.pos.x, nodeData.pos.y, nodeData.pos.z))
-                
+
                 let isEnabled = (nodeData.flags & NodeData.Flags.VISIBLE.rawValue) != 0
                 if entity.isEnabled != isEnabled {
                     entity.isEnabled = isEnabled
                 }
             }
         }
-        
+
     }
-    
+
     private var nodeIdsForNewlyEnteredNodes: [(Int64, Bool)] = []
-    
+
     private func onNodeAdded(_ node: SwiftGodot.Node) {
         let isRoot = node.getParent() == node.getTree()?.root
-        
+
         // TODO: Hack to get around the fact that the nodes coming in don't cast properly as their subclass yet. outside of this signal handler they do, so we store the id for later. :SignalsWithNodeArguments
         nodeIdsForNewlyEnteredNodes.append((Int64(node.getInstanceId()), isRoot))
-        
+
         if isRoot && !receivedRootNode {
             receivedRootNode = true
             resetRealityKit()
@@ -274,37 +276,37 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
         }
     }
-    
+
     private func didReceiveGodotVolumeCamera(_ node: Node3D) {
         volumeCamera = node
-        
+
         guard let area3D = volumeCamera as? Area3D else {
             logError("expected node '\(VISION_VOLUME_CAMERA_GODOT_NODE_NAME)' to be an Area3D, but it was a \(node.godotClassName)")
             return
         }
-        
+
         let collisionShape3Ds = area3D.findChildren(pattern: "*", type: "CollisionShape3D")
         if collisionShape3Ds.count != 1 {
             logError("expected \(VISION_VOLUME_CAMERA_GODOT_NODE_NAME) to have exactly one child with CollisionShape3D, but got \(collisionShape3Ds.count)")
             return
         }
-        
+
         guard let collisionShape3D = collisionShape3Ds[0] as? CollisionShape3D else {
             logError("Could not cast child as CollisionShape3D")
             return
         }
-        
+
         guard let boxShape3D = collisionShape3D.shape as? BoxShape3D else {
             logError("Could not cast shape as BoxShape3D in CollisionShape3D child of \(VISION_VOLUME_CAMERA_GODOT_NODE_NAME)")
             return
         }
-        
+
         let godotVolumeBoxSize = simd_float3(boxShape3D.size)
         volumeCameraBoxSize = godotVolumeBoxSize
-        
+
         changeScaleIfVolumeSizeChanged(realityKitVolumeSize)
     }
-    
+
     func resetRealityKit() {
         assert(Thread.current.isMainThread)
         audioStreamPlays.removeAll()
@@ -315,21 +317,21 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             child.removeFromParent()
         }
     }
-    
+
     private static var didInitGodot = false
-    
+
     var sharePlayEnabled: Bool { shareModel.activityIdentifier != nil }
-    
-    public func setupRealityKitScene(_ content: RealityViewContent, 
+
+    public func setupRealityKitScene(_ content: RealityViewContent,
                                      volumeSize: simd_double3,
                                      projectFileDir: String? = nil,
                                      sharePlayActivityId: String? = nil) -> Entity
     {
         assert(Thread.current.isMainThread)
-        
+
         projectContext.projectFolderName = projectFileDir ?? DEFAULT_PROJECT_FOLDER_NAME
         resourceCache.projectContext = projectContext
-        
+
         if sharePlayActivityId != nil {
             log("Starting shareplay session handler...")
             shareModel.activityIdentifier = sharePlayActivityId // ENABLE MULTIPLAYER if not nil
@@ -341,55 +343,55 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
         initGodot()
         Self.didInitGodot = true
-        
+
         realityKitVolumeSize = volumeSize
-        
+
         if SHOW_CORNERS {
             // Place some cubes to show the edges of the realitykit volume.
             let volumeDebugParent = Entity()
             volumeDebugParent.name = "volumeDebugParent"
-            
+
             let debugCube = MeshResource.generateBox(size: 0.1)
             func addAtPoint(_ p: simd_float3) {
                 let e = ModelEntity(mesh: debugCube, materials: [whiteNonMetallic])
                 e.position = p
                 content.add(e)
             }
-            
+
             let half = simd_float3(volumeSize * 0.5)
             addAtPoint(.init(half.x, half.y, -half.z))
             addAtPoint(.init(half.x, -half.y, -half.z))
             addAtPoint(.init(-half.x, -half.y, -half.z))
             addAtPoint(.init(-half.x, -half.y, -half.z))
-            
+
             addAtPoint(.init(half.x, half.y, half.z))
             addAtPoint(.init(half.x, -half.y, half.z))
             addAtPoint(.init(-half.x, -half.y, half.z))
             addAtPoint(.init(-half.x, -half.y, half.z))
         }
-        
+
         // Register a per-frame RealityKit update function.
         eventSubscription = content.subscribe(to: SceneEvents.Update.self, realityKitPerFrameTick)
-        
+
         // Create a root Entity to store all our mirrored Godot nodes-turned-RealityKit entities.
         godotEntitiesParent.name = "GODOTRK_ROOT"
         godotEntitiesScale.addChild(godotEntitiesParent)
-        
+
         // A root of that entity will also apply scale.
         godotEntitiesScale.name = "GODOTRK_SCALE"
         content.add(godotEntitiesScale)
-        
+
         return godotEntitiesParent
     }
 
     public func viewDidDisappear() {
         print("Cleaning up GodotVisionCoordinator.")
-        
+
         if let eventSubscription {
             eventSubscription.cancel()
             self.eventSubscription = nil
         }
-        
+
         // Disconnect SceneTree signals
         if let sceneTree {
             if let nodeTransformsChangedToken {
@@ -407,14 +409,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             self.sceneTree = nil
         }
     }
-    
+
     private func cacheAudioResource(resourcePath: String, godotInstanceID: Int64) -> AudioFileResource? {
         var audioResource: AudioFileResource? = _audioResources[resourcePath]
         if audioResource == nil {
             var configuration = AudioFileResource.Configuration()
-            
+
             // TODO: see if there's a way to use metadata to do shouldRandomizeStartTime
-            
+
             // See if we need to loop.
             // TODO: different AudioStreams may point at the same resource path?
             if let audioStreamPlayer3D = GD.instanceFromId(instanceId: godotInstanceID) as? AudioStreamPlayer3D,
@@ -437,12 +439,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 logError(error)
                 return nil
             }
-            
+
             _audioResources[resourcePath] = audioResource
         }
         return audioResource
     }
-    
+
     private func _onMeshResourceChanged(meshEntry: MeshEntry) {
         for entity in meshEntry.entities {
             if let node = entity.components[GodotNode.self]?.node3D {
@@ -450,16 +452,16 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
         }
     }
-    
+
     private func _updateModelEntityMesh(node: Node, existingEntity: Entity?, cb: ((Entity?) -> Void)? = nil) -> Entity {
         var mesh: SwiftGodot.Mesh? = nil
         var materials: [SwiftGodot.Material]? = nil
         var skeleton3D: SwiftGodot.Skeleton3D? = nil
         var flipFacesIfNoIndexBuffer: Bool = false
         var instanceTransforms: [simd_float4x4]? = nil
-        
+
         // Inspect the Godot node to see if we have a mesh, materials, and a skeleton.
-        
+
         if let meshInstance3D = node as? MeshInstance3D {
             // MeshInstance3D
             skeleton3D = meshInstance3D.skeleton.isEmpty() ? nil : (meshInstance3D.getNode(path: meshInstance3D.skeleton) as? Skeleton3D)
@@ -482,12 +484,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 mesh = transformAndMesh[1].asObject(SwiftGodot.Mesh.self)
             }
         }
-        
+
         // If getActiveMaterial did not provide materials, use the materials from the mesh directly.
         if materials == nil, let mesh {
             materials = (0..<mesh.getSurfaceCount()).compactMap { mesh.surfaceGetMaterial(surfIdx: $0) }
         }
-        
+
         // Create a ModelEntity if we have a mesh.
         var entity: Entity
         if let mesh, let node3D = node as? Node3D {
@@ -497,12 +499,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     oldMeshEntry.entities.remove(existingModelEntity)
                 }
             }
-            
+
             entity = existingEntity ?? ModelEntity()
             if existingEntity != nil && (existingEntity as? ModelEntity) == nil {
                 logError("Expected this to be a ModelEntity: \(String(describing: entity))")
             }
-            
+
             createRealityKitMesh(entity: entity,
                                  debugName: String(node3D.name),
                                  meshCreationInfo: meshCreationInfo,
@@ -519,29 +521,29 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             entity = existingEntity ?? Entity()
             cb?(entity)
         }
-    
+
         if let node3D = node as? Node3D {
             // Establish a link between the original Godot Node3D and the RK Entity.
             entity.components.getOrMake { (godotNode: inout GodotNode) in
                 godotNode.node3D = node3D
             }
         }
-        
+
         // Set grounding shadows on entities with a mesh (unless a metadata entry for 'grounding_shadow' exists and is false
         if mesh != nil && node.getMetaBool(grounding_shadow, defaultValue: true) {
             entity.components.set(GroundingShadowComponent(castsShadow: true))
         } else {
             entity.components.remove(GroundingShadowComponent.self)
         }
-        
+
         return entity
     }
-    
+
     private func _createRealityKitEntityForNewNode(_ node: SwiftGodot.Node) -> Entity {
         let inputRayPickable: Bool = (node as? CollisionObject3D)?.inputRayPickable ?? false
         // If there's a metadata entry for 'hover_effect' with the boolean value of true, we add a RealityKit HoverEffectComponent.
         let hoverEffect: Bool = inputRayPickable && node.getMetaBool(hover_effect, defaultValue: false)
-        
+
         // Construct a ModelEntity with our mesh data if we have one.
         let entity = _updateModelEntityMesh(node: node, existingEntity: nil) { entity in
             if inputRayPickable, let entity {
@@ -557,47 +559,47 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 entity.components.set(HoverEffectComponent())
             }
         }
-        
+
         let instanceID = Int64(node.getInstanceId())
         godotInstanceIDToEntity[instanceID] = entity
         godotEntitiesParent.addChild(entity)
-        
+
         // Setup a node to be tappable with the `InputTargetComponent()` if necessary..
-        
+
         // Finally, initialize the position/rotation/scale.
         if let node3D = node as? Node3D {
             entity.transform = RealityKit.Transform(node3D.transform)
             entity.isEnabled = node3D.visible
         }
-        
+
         // Remove RealityKit physics since we rely on Godot's.
         entity.components[PhysicsBodyComponent.self] = .none
-        
+
         return entity
     }
-    
+
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
 
         if !paused && stepGodotFrame() {
             print("GODOT HAS QUIT")
         }
-        
+
         for (godotAudioStreamPlayer, pbCon) in audioPlaybackControllers {
             if pbCon.isPlaying, godotAudioStreamPlayer.isPlaying() {
                 pbCon.speed = godotAudioStreamPlayer.pitchScale
             }
         }
-        
+
         for (id, isRoot) in nodeIdsForNewlyEnteredNodes {
             guard let node = GD.instanceFromId(instanceId: id) as? Node else {
                 logError("No new Node instance for id \(id)")
                 continue
             }
-            
+
             let entity = _createRealityKitEntityForNewNode(node)
             let node3D = node as? Node3D
-            
+
             let skeleton = node3D != nil ? getSkeletonNode(node: node3D!, entity: entity) : nil
             if let node3D, let skeleton {
                 entity.components.set(GodotNode(node3D: node3D))
@@ -610,17 +612,26 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     logError("expected to cast as ModelEntity but failed: \(entity)")
                 }
             }
-            
+
             // we notice a specially named node for the "bounds"
             if node.name == VISION_VOLUME_CAMERA_GODOT_NODE_NAME, let node3D = node as? Node3D {
                 didReceiveGodotVolumeCamera(node3D)
             }
-            
+
+            // MARK: - Create gesture context components on applicable nodes
             if node.hasSignal(spatial_drag) {
                 // TODO: check if it's a collision object? warn if not?
                 entity.components.set(GodotVisionDraggable())
             }
-            
+            if node.hasSignal(spatial_magnify) {
+                // TODO: check if it's a collision object? warn if not?
+                entity.components.set(GodotVisionMagnifiable())
+            }
+            if node.hasSignal(spatial_rotate3D) {
+                // TODO: check if it's a collision object? warn if not?
+                entity.components.set(GodotVisionRotateable())
+            }
+
             if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
                 // See if we need to prepare the audio resource (prevents a hitch on first play).
                 if audioStreamPlayer3D.getMetaBool(gv_auto_prepare, defaultValue: true) {
@@ -632,13 +643,13 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     }
                 }
             }
-            
+
             // XXX TEMP HACK while we build out the API for requesting head tracking.
             if node.name == "ARTracking", let node3D = node as? Node3D {
                 ensureARInited()
                 ar.nodes.insert(node3D)
             }
-            
+
             if !isRoot, let nodeParent = node.getParent() {
                 let parentId = Int64(nodeParent.getInstanceId())
                 if let parent = godotInstanceIDToEntity[parentId] {
@@ -655,7 +666,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             audioStreamPlays = retries
             godotInstanceIDsRemovedFromTree.removeAll()
         }
-        
+
         do {
             let newAudios = audioToProcess
             audioToProcess.removeAll()
@@ -664,7 +675,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 case PLAY = 1
                 case STOP = 2
             }
-            
+
             for newAudio in newAudios {
                 let node = GD.instanceFromId(instanceId: newAudio.instanceId)
                 if let audioStreamPlayer3D = node as? AudioStreamPlayer3D {
@@ -679,7 +690,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 }
             }
         }
-        
+
         // Play any AudioStreamPlayer3D sounds
         for var audioStreamPlay in audioStreamPlays {
             guard let entity = godotInstanceIDToEntity[audioStreamPlay.godotInstanceID] else {
@@ -689,7 +700,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 }
                 continue
             }
-            
+
             if let audioResource = cacheAudioResource(resourcePath: audioStreamPlay.resourcePath, godotInstanceID: audioStreamPlay.godotInstanceID) {
                 if audioStreamPlay.prepareOnly {
                     let _ = entity.prepareAudio(audioResource)
@@ -702,7 +713,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 }
             }
         }
-        
+
         // Remove any RealityKit Entities for Godot nodes that were removed from the Godot tree.
         for instanceIdRemovedFromTree in godotInstanceIDsRemovedFromTree {
             guard let entity = godotInstanceIDToEntity[Int64(instanceIdRemovedFromTree)] else { continue }
@@ -716,9 +727,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             entity.removeFromParent()
             godotInstanceIDToEntity.removeValue(forKey: Int64(instanceIdRemovedFromTree))
         }
-        
+
         arUpdate()
-        
+
         // Update skeletons
         if !skeletonsToUpdate.isEmpty {
             let skeletons = Array(skeletonsToUpdate.keys)
@@ -732,7 +743,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     logError("no modelEntities for skeleton \(skeleton)")
                     continue
                 }
-                
+
                 let numBonesIdx = skeletonIdx * 2
                 let (numBones, transformPtrInt) = (Int(results[numBonesIdx]), results[numBonesIdx + 1])
                 let transforms = (0..<numBones).map { boneIdx in
@@ -742,7 +753,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                     }
                     return Transform(transformPtr.pointee)
                 }
-                
+
                 modelEntities.forEach { $0.jointTransforms = transforms }
             }
         }
@@ -752,12 +763,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             // in our scene by applying the inverse transform of the camera to the parent Entity of Godot objects.
             godotEntitiesParent.transform = .init(volumeCamera.globalTransform.affineInverse())
         }
-        
+
         let newScale = godotToRealityKitRatio * extraScale
         godotEntitiesScale.scale = .one * newScale
         godotEntitiesScale.position = extraOffset
     }
-    
+
     // TODO: remove this function and use the `GodotNode` Component to link Entity -> Node3D
     func godotInstanceFromRealityKitEntityID(_ eID: Entity.ID) -> SwiftGodot.Object? {
         for (godotInstanceID, rkEntity) in godotInstanceIDToEntity where rkEntity.id == eID {
@@ -765,26 +776,26 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 logError("could not get Godot instance from id \(godotInstanceID)")
                 continue
             }
-            
+
             return godotInstance
         }
-        
+
         return nil
     }
-    
+
     /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
     func receivedDrag(_ value: EntityTargetValue<DragGesture.Value>, ended: Bool = false) {
         let entity = value.entity
-        
+
         // See if this Node has a 'drag' signal
         guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
         if !obj.hasSignal(spatial_drag) {
             return
         }
-        
+
         guard var dragCtx = entity.components[GodotVisionDraggable.self] else { return }
         defer { entity.components.set(dragCtx) }
-        
+
         var origPos = dragCtx.originalPosition
         var began = false
         if origPos == nil {
@@ -792,13 +803,13 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             dragCtx.originalPosition = origPos
             began = true
         }
-        
+
         var origRotation = dragCtx.originalRotation
         if origRotation == nil {
             origRotation = Rotation3D(entity.orientation(relativeTo: nil))
             dragCtx.originalRotation = origRotation
         }
-        
+
         // Rotation
         var newOrientation = entity.orientation(relativeTo: nil)
         let localToScene = value.transform(from: .local, to: .scene) // an AffineTransform3D which maps .local to .scene
@@ -810,41 +821,179 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             // "add" the original pose and the delta of the (current pose - start pose)
             newOrientation = .init((currentRotation * startRotation.inverse) * origRotation!)
         }
-        
+
         // Position
         // Note that we ignore the position of the pose3D objects above--they are actually more noisy than the smoothed out version we get in
         // the gesture value.
         let startPos = value.convert(value.startLocation3D, from: .local, to: .scene)
         let currentPos = value.convert(value.location3D, from: .local, to: .scene)
         let newPosition = (currentPos - startPos) + origPos!
-        
+
         let scale = entity.scale(relativeTo: nil) // TODO: test dragging nodes with different scales to make sure this is right
-        
+
         let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
         let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: newOrientation, translation: newPosition), from: nil))
         let phase = ended ? "ended" : (began ? "began" : "changed")
-        
+
+
         // pass a dictionary of values to the drag signal
         let dict: GDictionary = .init()
         dict["global_transform"] = Variant(gdGlobalTransform)
         dict["start_global_transform"] = Variant(gdStartGlobalTransform)
         dict["phase"] = Variant(phase)
-        
+
         obj.emitSignal(spatial_drag, Variant(dict))
-        
+
         if shareModel.automaticallyShareInput, let node = obj as? Node {
             let nodePathString = node.getPath().description
-            
+
             let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
             let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_drag", params: params)
             self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
         }
-        
+
         if ended {
             dragCtx.reset()
         }
     }
+
+    /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
+    func receivedMagnify(_ value: EntityTargetValue<MagnifyGesture.Value>, ended: Bool = false) {
+        let entity = value.entity
+
+        // See if this Node has a 'magnify' signal
+        guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
+        if !obj.hasSignal(spatial_magnify) {
+            return
+        }
+
+        guard var magCtx = entity.components[GodotVisionMagnifiable.self] else { return }
+        defer { entity.components.set(magCtx) }
+
+        var origScale = magCtx.originalScale
+        var began = false
+        if origScale == nil {
+            origScale = entity.scale(relativeTo: nil)
+            magCtx.originalScale = origScale
+            began = true
+        }
+
+        var origPos = magCtx.originalPosition
+        if origPos == nil {
+            origPos = entity.position(relativeTo: nil)
+            magCtx.originalPosition = origPos
+        }
+
+        var origRotation = magCtx.originalRotation
+        if origRotation == nil {
+            origRotation = Rotation3D(entity.orientation(relativeTo: nil))
+            magCtx.originalRotation = origRotation
+        }
+
+        var entityScale = origScale
+        
+        let localToScene = value.transform(from: .local, to: .scene)
+        
+        
+        let magnification = Float(value.magnification)
+        let newScale = origScale! * magnification
+
+        let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: origScale!, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
+        let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: newScale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
+        
+        let phase = ended ? "ended" : (began ? "began" : "changed")
+
+        // pass a dictionary of values to the signal
+        let dict: GDictionary = .init()
+        dict["global_transform"] = Variant(gdGlobalTransform)
+        dict["start_global_transform"] = Variant(gdStartGlobalTransform)
+        dict["phase"] = Variant(phase)
+
+        obj.emitSignal(spatial_magnify, Variant(dict))
+
+        if shareModel.automaticallyShareInput, let node = obj as? Node {
+            let nodePathString = node.getPath().description
+
+            let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
+            let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_magnify", params: params)
+            self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
+        }
+
+        if ended {
+            magCtx.reset()
+        }
+    }
     
+    var rotateState = "inactive"
+    
+    /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
+    func receivedRotate3D(_ value: EntityTargetValue<RotateGesture3D.Value>, ended: Bool = false) {
+        let entity = value.entity
+
+        // See if this Node has a 'rotate3D' signal
+        guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
+        if !obj.hasSignal(spatial_rotate3D) {
+            return
+        }
+
+        guard var rotCtx = entity.components[GodotVisionRotateable.self] else { return }
+        defer { entity.components.set(rotCtx) }
+
+        var origPos = rotCtx.originalPosition
+        var began = false
+        if origPos == nil {
+            origPos = entity.position(relativeTo: nil)
+            rotCtx.originalPosition = origPos
+            began = true
+        }
+
+        var origRotation = rotCtx.originalRotation
+        if origRotation == nil {
+            origRotation = Rotation3D(entity.orientation(relativeTo: nil))
+            rotCtx.originalRotation = origRotation
+        }
+
+        // Rotation
+        let rotation = value.rotation
+        let flippedRotation = Rotation3D(angle: rotation.angle,
+                                         axis: RotationAxis3D(x: -rotation.axis.x,
+                                                              y: rotation.axis.y,
+                                                              z: -rotation.axis.z))
+        
+        var newOrientation = entity.orientation(relativeTo: nil)
+        let startRotation = origRotation
+
+        newOrientation = .init(flippedRotation * startRotation!)
+
+        let scale = entity.scale(relativeTo: nil)
+
+        let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
+        let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: newOrientation, translation: .init(origPos!)), from: nil))
+        let phase = ended ? "ended" : (began ? "began" : "changed")
+
+        // pass a dictionary of values to the drag signal
+        let dict: GDictionary = .init()
+        let source = "rotate3D"
+        dict["global_transform"] = Variant(gdGlobalTransform)
+        dict["start_global_transform"] = Variant(gdStartGlobalTransform)
+        dict["phase"] = Variant(phase)
+        dict["source"] = Variant(source)
+
+        obj.emitSignal(spatial_rotate3D, Variant(dict))
+
+        if shareModel.automaticallyShareInput, let node = obj as? Node {
+            let nodePathString = node.getPath().description
+
+            let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
+            let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_rotate3D", params: params)
+            self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
+        }
+
+        if ended {
+            rotCtx.reset()
+        }
+    }
+
     func onMultiplayerData(_ data: Data) {
         let inputMessage: InputMessage<SpatialDragParams>
         do {
@@ -853,19 +1002,19 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             log("error decoding json \(error)")
             return
         }
-        
+
         guard let sceneTree else {
             return
         }
-        
+
         DispatchQueue.main.async {
-            
+
             let nodePath = NodePath(inputMessage.nodePath)
             guard let node = sceneTree.root?.getNode(path: nodePath) as? Node else {
                 log("Could not find Node for node path \(nodePath)")
                 return
             }
-            
+
             let dict = GDictionary()
             dict["global_transform"] = Variant(Transform3D(inputMessage.params.global_transform))
             dict["start_global_transform"] = Variant(Transform3D(inputMessage.params.start_global_transform))
@@ -874,38 +1023,48 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             log("did emit \(inputMessage.signalName) from remote!")
         }
     }
-    
+
     /// A visionOS drag has ended. We emit a signal to inform Godot land.
     func receivedDragEnded(_ value: EntityTargetValue<DragGesture.Value>) {
         receivedDrag(value, ended: true)
     }
+
+    /// A visionOS magnify has ended. We emit a signal to inform Godot land.
+    func receivedMagnifyEnded(_ value: EntityTargetValue<MagnifyGesture.Value>) {
+        receivedMagnify(value, ended: true)
+    }
     
+    /// A visionOS rotate3D has ended. We emit a signal to inform Godot land.
+    func receivedRotate3DEnded(_ value: EntityTargetValue<RotateGesture3D.Value>) {
+        receivedRotate3D(value, ended: true)
+    }
+
     /// RealityKit has received a SpatialTapGesture in the RealityView
     func receivedTap(event: EntityTargetValue<SpatialTapGesture.Value>) {
         let sceneLoc = event.convert(event.location3D, from: .local, to: .scene)
         let godotLocation = godotEntitiesParent.convert(position: simd_float3(sceneLoc), from: nil)
-        
+
         // TODO: hack. this normal is not always right. currently this just pretends everything you tap is a sphere???
-        
+
         let realityKitNormal = normalize(event.entity.position(relativeTo: nil) - sceneLoc)
-        
+
         // TODO: need to convert the normal to global or local space?
-        
+
         let godotNormal = realityKitNormal
-        
+
         guard let obj = self.godotInstanceFromRealityKitEntityID(event.entity.id) else { return }
-            
+
         // Construct an InputEventMouseButton to send to Godot.
-        
+
         let godotEvent = InputEventMouseButton()
         godotEvent.buttonIndex = .left
         godotEvent.doubleClick = false // TODO
         godotEvent.pressed = true
-        
+
         let position = SwiftGodot.Vector3(godotLocation) // TODO: check if this should be global or local.
         let normal = SwiftGodot.Vector3(godotNormal)
         let shape_idx = 0
-        
+
         // TODO: I think SwiftGodot provides a better way to emit signals than all these Variant() constructors
         obj.emitSignal("input_event", Variant.init(), Variant(godotEvent), Variant(position), Variant(normal), Variant(shape_idx))
     }
@@ -921,7 +1080,7 @@ struct GodotNode: Component {
 /// Contains the notion of where in the application bundle to find the Godot .project file.
 class GodotProjectContext {
     var projectFolderName: String? = nil
-    
+
     func fileUrl(forGodotResourcePath resourcePath: String) -> URL {
         getGodotProjectURL().appendingPathComponent(resourcePath.removingStringPrefix("res://"))
     }
@@ -948,42 +1107,68 @@ class GodotProjectContext {
 struct GodotVisionDraggable: Component {
     var originalPosition: simd_float3? = nil
     var originalRotation: Rotation3D? = nil
-    
+    var originalScale: SIMD3<Float>? = nil
+
     mutating func reset() {
         originalPosition = nil
         originalRotation = nil
+        originalScale = nil
     }
 }
-    
+
+struct GodotVisionMagnifiable: Component {
+    var originalPosition: simd_float3? = nil
+    var originalRotation: Rotation3D? = nil
+    var originalScale: SIMD3<Float>? = nil
+
+    mutating func reset() {
+        originalPosition = nil
+        originalRotation = nil
+        originalScale = nil
+    }
+}
+
+struct GodotVisionRotateable: Component {
+    var originalPosition: simd_float3? = nil
+    var originalRotation: Rotation3D? = nil
+    var originalScale: SIMD3<Float>? = nil
+
+    mutating func reset() {
+        originalPosition = nil
+        originalRotation = nil
+        originalScale = nil
+    }
+}
+
 private func getSkeletonNode(node: SwiftGodot.Node3D, entity: RealityKit.Entity, verbose: Bool = false) -> Skeleton3D? {
     guard let _ = entity as? ModelEntity else {
         if verbose { print("RK entity is not a ModelEntity") }
         return nil
     }
-    
+
     guard let meshInstance3D = node as? MeshInstance3D else {
         if verbose { print("the godot Node is not a MeshInstance3D") }
         return nil
     }
-    
+
     let skeletonNodePath = meshInstance3D.skeleton
     if !skeletonNodePath.isEmpty(), let skeleton = meshInstance3D.getNode(path: skeletonNodePath) as? Skeleton3D {
         return skeleton
     }
-    
+
     return nil
 }
 
 protocol TriviallyInitializableComponent: Component { init() }
 extension GodotNode: TriviallyInitializableComponent {}
-    
+
 extension Entity.ComponentSet {
     mutating func getOrMake<T>(_ cb: (inout T) -> Void) where T: TriviallyInitializableComponent {
         var componentData = self[T.self] ?? .init()
         cb(&componentData)
         self[T.self] = componentData
     }
-    
+
     mutating func modifyIfExists<T>(_ cb: (inout T) -> Void) where T: Component {
         if var componentData = self[T.self] {
             cb(&componentData)
@@ -1010,7 +1195,7 @@ public struct CodableTransform3D: Codable {
     var basis1: simd_float3
     var basis2: simd_float3
     var origin: simd_float3
-    
+
     init(_ t: Transform3D) {
         basis0 = .init(t.basis.x)
         basis1 = .init(t.basis.y)
@@ -1029,7 +1214,7 @@ func updateCollision(entity: Entity, count: Int = 0) {
     if !entity.components.has(InputTargetComponent.self) {
         return
     }
-    
+
     let bounds = entity.visualBounds(relativeTo: entity.parent, excludeInactive: true)
     if bounds.isEmpty {
         if entity.parent != nil, count < 500 {
@@ -1039,10 +1224,10 @@ func updateCollision(entity: Entity, count: Int = 0) {
                 updateCollision(entity: entity, count: count + 1)
             }
         }
-        
+
         return
     }
-    
+
     // TODO: we could have more fine-graned input ray pickable shapes based on the Godot collision shapes. Currently we just put a box around the visual bounds.
     var collision = CollisionComponent(shapes: [.generateBox(size: bounds.extents)])
     collision.filter = .init(group: [], mask: []) // disable for collision detection
