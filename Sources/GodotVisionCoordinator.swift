@@ -890,11 +890,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             magCtx.originalRotation = origRotation
         }
 
-        var entityScale = origScale
-        
-        let localToScene = value.transform(from: .local, to: .scene)
-        
-        
         let magnification = Float(value.magnification)
         let newScale = origScale! * magnification
 
