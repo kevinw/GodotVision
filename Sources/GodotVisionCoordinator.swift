@@ -45,7 +45,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var godotEntitiesScale = Entity() /// Applies a global scale to the godot scene based on the volume size and the godot camera volume.
 
     var shareModel = ShareModel()
-
+    
     public var extraScale: Float = 1.0
     public var extraOffset: simd_float3 = .zero
     @Published public var paused: Bool = false
@@ -71,11 +71,26 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     private var projectContext: GodotProjectContext = .init()
     private var skeletonsToUpdate: Dictionary<Skeleton3D, [ModelEntity]> = .init()
 
+    private static var didInitGodot = false
+
     var ar: ARState = .init() /// State for AR functionality.
+
+    /// Allow the user to set how many physics ticks per second (90 is the normal FPS of the vision headset)
+    public var physicsTicksPerSecond: Int {
+        get {
+            Int(Engine.physicsTicksPerSecond)
+        }
+        set {
+            if physicsTicksPerSecond != newValue {
+                Engine.physicsTicksPerSecond = Int32(newValue)
+                objectWillChange.send()
+            }
+        }
+    }
 
     // explanation in comment below
     let volumeRatioDebouncer = Debouncer(delay: 2)
-
+    
     // we expect changeScaleIfVolumeSizeChanged to be called...
     // - from didReceiveGodotVolumeCamera, when Volume Camera node is first recognized
     // - from SwiftUI RealityView update method in ContentView
@@ -318,17 +333,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private static var didInitGodot = false
-
     var sharePlayEnabled: Bool { shareModel.activityIdentifier != nil }
 
+    @MainActor
     public func setupRealityKitScene(_ content: RealityViewContent,
                                      volumeSize: simd_double3,
                                      projectFileDir: String? = nil,
-                                     sharePlayActivityId: String? = nil) -> Entity
+                                     sharePlayActivityId: String? = nil,
+                                     loadScene: String? = nil) -> Entity
     {
-        assert(Thread.current.isMainThread)
-
         projectContext.projectFolderName = projectFileDir ?? DEFAULT_PROJECT_FOLDER_NAME
         resourceCache.projectContext = projectContext
 
@@ -338,37 +351,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             shareModel.startSessionHandlerTask()
         }
 
-        if Self.didInitGodot {
-            print("ERROR: Currently only one godot instance at a time is possible.")
+        if !Self.didInitGodot {
+            initGodot() // TODO: once libgodot is properly embeddable/teardownable this will change.
+            Self.didInitGodot = true
         }
-        initGodot()
-        Self.didInitGodot = true
 
         realityKitVolumeSize = volumeSize
 
-        if SHOW_CORNERS {
-            // Place some cubes to show the edges of the realitykit volume.
-            let volumeDebugParent = Entity()
-            volumeDebugParent.name = "volumeDebugParent"
-
-            let debugCube = MeshResource.generateBox(size: 0.1)
-            func addAtPoint(_ p: simd_float3) {
-                let e = ModelEntity(mesh: debugCube, materials: [whiteNonMetallic])
-                e.position = p
-                content.add(e)
-            }
-
-            let half = simd_float3(volumeSize * 0.5)
-            addAtPoint(.init(half.x, half.y, -half.z))
-            addAtPoint(.init(half.x, -half.y, -half.z))
-            addAtPoint(.init(-half.x, -half.y, -half.z))
-            addAtPoint(.init(-half.x, -half.y, -half.z))
-
-            addAtPoint(.init(half.x, half.y, half.z))
-            addAtPoint(.init(half.x, -half.y, half.z))
-            addAtPoint(.init(-half.x, -half.y, half.z))
-            addAtPoint(.init(-half.x, -half.y, half.z))
-        }
+        if SHOW_CORNERS { addCornersToRealityKitContent(content, volumeSize: volumeSize) }
 
         // Register a per-frame RealityKit update function.
         eventSubscription = content.subscribe(to: SceneEvents.Update.self, realityKitPerFrameTick)
@@ -380,6 +370,10 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         // A root of that entity will also apply scale.
         godotEntitiesScale.name = "GODOTRK_SCALE"
         content.add(godotEntitiesScale)
+        
+        if let loadScene {
+            changeSceneToFile(atResourcePath: loadScene)
+        }
 
         return godotEntitiesParent
     }
@@ -408,6 +402,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
             self.sceneTree = nil
         }
+        
+        godotEntitiesScale.removeFromParent()
     }
 
     private func cacheAudioResource(resourcePath: String, godotInstanceID: Int64) -> AudioFileResource? {
@@ -522,11 +518,12 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             cb?(entity)
         }
 
-        if let node3D = node as? Node3D {
-            // Establish a link between the original Godot Node3D and the RK Entity.
-            entity.components.getOrMake { (godotNode: inout GodotNode) in
-                godotNode.node3D = node3D
-            }
+        let node3D = node as? Node3D // may be nil, that's ok
+        
+        // Establish a link between the original Godot Node3D and the RK Entity.
+        entity.components.getOrMake { (godotNode: inout GodotNode) in
+            godotNode.node = node
+            godotNode.node3D = node3D
         }
 
         // Set grounding shadows on entities with a mesh (unless a metadata entry for 'grounding_shadow' exists and is false
@@ -577,8 +574,14 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         return entity
     }
+    
+    public var scenePhase: ScenePhase = .active
 
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
+        if scenePhase != .active {
+            return
+        }
+        
         Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
 
         if !paused && stepGodotFrame() {
@@ -721,7 +724,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
                 if let meshEntry = godotNode.meshEntry, let modelEntity = entity as? ModelEntity {
                     meshEntry.entities.remove(modelEntity)
                 }
-                entity.components.remove(GodotNode.self)
             }
             entity.components.remove(GodotNode.self)
             entity.removeFromParent()
@@ -769,18 +771,9 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         godotEntitiesScale.position = extraOffset
     }
 
-    // TODO: remove this function and use the `GodotNode` Component to link Entity -> Node3D
-    func godotInstanceFromRealityKitEntityID(_ eID: Entity.ID) -> SwiftGodot.Object? {
-        for (godotInstanceID, rkEntity) in godotInstanceIDToEntity where rkEntity.id == eID {
-            guard let godotInstance = GD.instanceFromId(instanceId: godotInstanceID) else {
-                logError("could not get Godot instance from id \(godotInstanceID)")
-                continue
-            }
-
-            return godotInstance
-        }
-
-        return nil
+    /// Returns the SwiftGodot Object associated with this RealityKit Entity.
+    func godotInstanceFromRealityKitEntityID(_ entity: Entity) -> SwiftGodot.Object? {
+        entity.components[GodotNode.self]?.node
     }
 
     /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
@@ -788,7 +781,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let entity = value.entity
 
         // See if this Node has a 'drag' signal
-        guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
+        guard let obj = godotInstanceFromRealityKitEntityID(entity) else { return }
         if !obj.hasSignal(spatial_drag) {
             return
         }
@@ -862,7 +855,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let entity = value.entity
 
         // See if this Node has a 'magnify' signal
-        guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
+        guard let obj = godotInstanceFromRealityKitEntityID(entity) else { return }
         if !obj.hasSignal(spatial_magnify) {
             return
         }
@@ -926,7 +919,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let entity = value.entity
 
         // See if this Node has a 'rotate3D' signal
-        guard let obj = godotInstanceFromRealityKitEntityID(entity.id) else { return }
+        guard let obj = godotInstanceFromRealityKitEntityID(entity) else { return }
         if !obj.hasSignal(spatial_rotate3D) {
             return
         }
@@ -1047,7 +1040,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         let godotNormal = realityKitNormal
 
-        guard let obj = self.godotInstanceFromRealityKitEntityID(event.entity.id) else { return }
+        guard let obj = godotInstanceFromRealityKitEntityID(event.entity) else { return }
 
         // Construct an InputEventMouseButton to send to Godot.
 
@@ -1068,6 +1061,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
 /// Stores a reference to a Godot Node3D in the RealityKit ECS for an Entity.
 struct GodotNode: Component {
+    var node: Node? = nil
     var node3D: Node3D? = nil
     var meshEntry: MeshEntry? = nil
 }
@@ -1227,4 +1221,28 @@ func updateCollision(entity: Entity, count: Int = 0) {
     var collision = CollisionComponent(shapes: [.generateBox(size: bounds.extents)])
     collision.filter = .init(group: [], mask: []) // disable for collision detection
     entity.components.set(collision)
+}
+
+fileprivate func addCornersToRealityKitContent(_ content: RealityViewContent, volumeSize: simd_double3) {
+    // Place some cubes to show the edges of the realitykit volume.
+    let volumeDebugParent = Entity()
+    volumeDebugParent.name = "volumeDebugParent"
+    
+    let debugCube = MeshResource.generateBox(size: 0.1)
+    func addAtPoint(_ p: simd_float3) {
+        let e = ModelEntity(mesh: debugCube, materials: [whiteNonMetallic])
+        e.position = p
+        content.add(e)
+    }
+    
+    let half = simd_float3(volumeSize * 0.5)
+    addAtPoint(.init(half.x, half.y, -half.z))
+    addAtPoint(.init(half.x, -half.y, -half.z))
+    addAtPoint(.init(-half.x, -half.y, -half.z))
+    addAtPoint(.init(-half.x, -half.y, -half.z))
+    
+    addAtPoint(.init(half.x, half.y, half.z))
+    addAtPoint(.init(half.x, -half.y, half.z))
+    addAtPoint(.init(-half.x, -half.y, half.z))
+    addAtPoint(.init(-half.x, -half.y, half.z))
 }

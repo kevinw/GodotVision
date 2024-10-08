@@ -5,6 +5,7 @@ import SwiftUI
 import RealityKit
 
 public struct GodotVisionRealityViewModifier: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
     var coordinator: GodotVisionCoordinator
 
     public init(coordinator: GodotVisionCoordinator) {
@@ -76,6 +77,10 @@ public struct GodotVisionRealityViewModifier: ViewModifier {
             
             .onDisappear {
                 coordinator.viewDidDisappear()
+            }
+        
+            .onChange(of: scenePhase) { _, phase in
+                coordinator.scenePhase = phase
             }
     }
 }

@@ -340,11 +340,11 @@ extension ShareModel {
         }
     }
         
-    private func onGodotRequestJoin(args: [Variant]) -> Variant? {
-        guard let node = godotData.node else { return nil }
+    private func onGodotRequestJoin(arguments: borrowing Arguments) -> Variant {
+        guard let node = godotData.node else { return .init() }
         automaticallyShareInput = Bool(node.get(property: "automatically_share_input")) ?? false
         maybeJoin()
-        return nil
+        return .init()
     }
     
 }
