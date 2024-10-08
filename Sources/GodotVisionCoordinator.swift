@@ -39,42 +39,13 @@ struct AudioStreamPlay {
 }
 
 public class GodotVisionCoordinator: NSObject, ObservableObject {
-    private var godotInstanceIDToEntity: [Int64: Entity] = [:]
-
-    var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
-    private var godotEntitiesScale = Entity() /// Applies a global scale to the godot scene based on the volume size and the godot camera volume.
-
-    var shareModel = ShareModel()
     
+    @Published public var paused: Bool = false
+    public var sceneTree: SceneTree? = nil /// The main Godot SceneTree object.
     public var extraScale: Float = 1.0
     public var extraOffset: simd_float3 = .zero
-    @Published public var paused: Bool = false
-
-    private var eventSubscription: EventSubscription? = nil
-    private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
-    private var nodeAddedToken: SwiftGodot.Object? = nil
-    private var nodeRemovedToken: SwiftGodot.Object? = nil
-    private var audioStreamPlayerPlaybackToken: SwiftGodot.Object? = nil
-    private var receivedRootNode = false
-    private var resourceCache: ResourceCache = .init()
-    public var sceneTree: SceneTree? = nil
-    private var volumeCamera: SwiftGodot.Node3D? = nil
-    private var audioStreamPlays: [AudioStreamPlay] = []
-    private var audioPlaybackControllers: [AudioStreamPlayer3D: AudioPlaybackController] = [:]
-    private var _audioResources: [String: AudioFileResource] = [:]
-
-    private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
-    private var volumeCameraBoxSize: simd_float3 = .one
-    private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealityKit volume is, in meters, as an application in the user's AR space.
-    private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
-
-    private var projectContext: GodotProjectContext = .init()
-    private var skeletonsToUpdate: Dictionary<Skeleton3D, [ModelEntity]> = .init()
-
-    private static var didInitGodot = false
-
-    var ar: ARState = .init() /// State for AR functionality.
-
+    public var scenePhase: ScenePhase = .active
+    
     /// Allow the user to set how many physics ticks per second (90 is the normal FPS of the vision headset)
     public var physicsTicksPerSecond: Int {
         get {
@@ -88,9 +59,35 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
 
-    // explanation in comment below
-    let volumeRatioDebouncer = Debouncer(delay: 2)
-    
+    var godotEntitiesParent = Entity() /// The tree of RealityKit Entities mirroring Godot Node3Ds gets parented here.
+    var shareModel = ShareModel()
+
+    private var godotInstanceIDToEntity: [Int64: Entity] = [:]
+    private var godotEntitiesScale = Entity() /// Applies a global scale to the godot scene based on the volume size and the godot camera volume.
+    private var eventSubscription: EventSubscription? = nil
+    private var nodeTransformsChangedToken: SwiftGodot.Object? = nil
+    private var nodeAddedToken: SwiftGodot.Object? = nil
+    private var nodeRemovedToken: SwiftGodot.Object? = nil
+    private var audioStreamPlayerPlaybackToken: SwiftGodot.Object? = nil
+    private var receivedRootNode = false
+    private var resourceCache: ResourceCache = .init()
+    private var volumeCamera: SwiftGodot.Node3D? = nil
+    private var audioStreamPlays: [AudioStreamPlay] = []
+    private var audioPlaybackControllers: [AudioStreamPlayer3D: AudioPlaybackController] = [:]
+    private var _audioResources: [String: AudioFileResource] = [:]
+    private var godotInstanceIDsRemovedFromTree: Set<UInt> = .init()
+    private var nodeIdsForNewlyEnteredNodes: [(godotInstanceId: Int64, isRoot: Bool)] = []
+    private var volumeCameraBoxSize: simd_float3 = .one
+    private var realityKitVolumeSize: simd_double3 = .one /// The size we think the RealityKit volume is, in meters, as an application in the user's AR space.
+    private var godotToRealityKitRatio: Float = 0.05 // default ratio - this is adjusted when realityKitVolumeSize size changes
+    private var projectContext: GodotProjectContext = .init()
+    private var skeletonsToUpdate: Dictionary<Skeleton3D, [ModelEntity]> = .init()
+    private static var didInitGodot = false
+
+    var ar: ARState = .init() /// State for AR functionality.
+
+    private let volumeRatioDebouncer = Debouncer(delay: 2) // used in changeScaleIfVolumeSizeChanged
+
     // we expect changeScaleIfVolumeSizeChanged to be called...
     // - from didReceiveGodotVolumeCamera, when Volume Camera node is first recognized
     // - from SwiftUI RealityView update method in ContentView
@@ -111,21 +108,28 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
 
+    @MainActor
     public func reloadScene() {
         print("reloadScene currently doesn't work for loading a new version of the scene saved from the editor, since Xcode copies the Godot_Project into the application's bundle only once at build time.")
         resetRealityKit()
         if let sceneFilePath = self.sceneTree?.currentScene?.sceneFilePath {
-            self.changeSceneToFile(atResourcePath: sceneFilePath)
+            changeSceneToFile(atResourcePath: sceneFilePath)
         } else {
             logError("cannot reload, no .sceneFilePath")
         }
     }
 
+    @MainActor
     public func changeSceneToFile(atResourcePath sceneResourcePath: String) {
         guard let sceneTree else { return }
         print("CHANGING SCENE TO", sceneResourcePath)
 
         self.receivedRootNode = false // we will "regrab" the root node and do init stuff with it again.
+
+        for (godotInstanceId, _) in godotInstanceIDToEntity {
+            godotInstanceIDsRemovedFromTree.insert(UInt(godotInstanceId))
+        }
+        flushRemovedInstances()
 
         let result = sceneTree.changeSceneToFile(path: sceneResourcePath)
         if SwiftGodot.GodotError.ok != result {
@@ -185,12 +189,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         #endif
     }
 
-    struct AudioToProcess {
-        var instanceId: Int64
-        var state: Int64
-        var flags: Int64
-        var from_pos: Double
-    }
     private var audioToProcess: [AudioToProcess] = []
 
     // callback for custom signal on SceneTree from GodotVision's libgodot fork which gets called for all AudioStreamPlayer[3D] play/stop
@@ -274,9 +272,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
     }
 
-    private var nodeIdsForNewlyEnteredNodes: [(Int64, Bool)] = []
-
-    private func onNodeAdded(_ node: SwiftGodot.Node) {
+    @MainActor private func onNodeAdded(_ node: SwiftGodot.Node) {
         let isRoot = node.getParent() == node.getTree()?.root
 
         // TODO: Hack to get around the fact that the nodes coming in don't cast properly as their subclass yet. outside of this signal handler they do, so we store the id for later. :SignalsWithNodeArguments
@@ -321,13 +317,18 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         changeScaleIfVolumeSizeChanged(realityKitVolumeSize)
     }
-
+    
+    @MainActor
     func resetRealityKit() {
-        assert(Thread.current.isMainThread)
+        for (godotInstanceId, _) in godotInstanceIDToEntity {
+            godotInstanceIDsRemovedFromTree.insert(UInt(godotInstanceId))
+        }
+        flushRemovedInstances()
         audioStreamPlays.removeAll()
         audioPlaybackControllers.removeAll()
         resourceCache.reset()
         skeletonsToUpdate.removeAll()
+        
         for child in godotEntitiesParent.children.map({ $0 }) {
             child.removeFromParent()
         }
@@ -575,8 +576,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         return entity
     }
     
-    public var scenePhase: ScenePhase = .active
-
     private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
         if scenePhase != .active {
             return
@@ -717,19 +716,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             }
         }
 
-        // Remove any RealityKit Entities for Godot nodes that were removed from the Godot tree.
-        for instanceIdRemovedFromTree in godotInstanceIDsRemovedFromTree {
-            guard let entity = godotInstanceIDToEntity[Int64(instanceIdRemovedFromTree)] else { continue }
-            if let godotNode = entity.components[GodotNode.self] {
-                if let meshEntry = godotNode.meshEntry, let modelEntity = entity as? ModelEntity {
-                    meshEntry.entities.remove(modelEntity)
-                }
-            }
-            entity.components.remove(GodotNode.self)
-            entity.removeFromParent()
-            godotInstanceIDToEntity.removeValue(forKey: Int64(instanceIdRemovedFromTree))
-        }
-
+        flushRemovedInstances()
         arUpdate()
 
         // Update skeletons
@@ -770,10 +757,20 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         godotEntitiesScale.scale = .one * newScale
         godotEntitiesScale.position = extraOffset
     }
+    
+    private func flushRemovedInstances() {
+        for instanceIdRemovedFromTree in godotInstanceIDsRemovedFromTree {
+            guard let entity = godotInstanceIDToEntity[Int64(instanceIdRemovedFromTree)] else { continue }
+            if let godotNode = entity.components[GodotNode.self] {
+                if let meshEntry = godotNode.meshEntry, let modelEntity = entity as? ModelEntity {
+                    meshEntry.entities.remove(modelEntity)
+                }
+            }
+            entity.components.remove(GodotNode.self)
+            entity.removeFromParent()
+            godotInstanceIDToEntity.removeValue(forKey: Int64(instanceIdRemovedFromTree))
+        }
 
-    /// Returns the SwiftGodot Object associated with this RealityKit Entity.
-    func godotInstanceFromRealityKitEntityID(_ entity: Entity) -> SwiftGodot.Object? {
-        entity.components[GodotNode.self]?.node
     }
 
     /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
@@ -781,7 +778,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let entity = value.entity
 
         // See if this Node has a 'drag' signal
-        guard let obj = godotInstanceFromRealityKitEntityID(entity) else { return }
+        guard let obj = entity.godotNode else { return }
         if !obj.hasSignal(spatial_drag) {
             return
         }
@@ -855,7 +852,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let entity = value.entity
 
         // See if this Node has a 'magnify' signal
-        guard let obj = godotInstanceFromRealityKitEntityID(entity) else { return }
+        guard let obj = entity.godotNode else { return }
         if !obj.hasSignal(spatial_magnify) {
             return
         }
@@ -899,8 +896,8 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         obj.emitSignal(spatial_magnify, Variant(dict))
 
-        if shareModel.automaticallyShareInput, let node = obj as? Node {
-            let nodePathString = node.getPath().description
+        if shareModel.automaticallyShareInput {
+            let nodePathString = obj.getPath().description
 
             let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
             let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_magnify", params: params)
@@ -919,7 +916,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let entity = value.entity
 
         // See if this Node has a 'rotate3D' signal
-        guard let obj = godotInstanceFromRealityKitEntityID(entity) else { return }
+        guard let obj = entity.godotNode else { return }
         if !obj.hasSignal(spatial_rotate3D) {
             return
         }
@@ -1040,7 +1037,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         let godotNormal = realityKitNormal
 
-        guard let obj = godotInstanceFromRealityKitEntityID(event.entity) else { return }
+        guard let obj = event.entity.godotNode else { return }
 
         // Construct an InputEventMouseButton to send to Godot.
 
@@ -1245,4 +1242,18 @@ fileprivate func addCornersToRealityKitContent(_ content: RealityViewContent, vo
     addAtPoint(.init(half.x, -half.y, half.z))
     addAtPoint(.init(-half.x, -half.y, half.z))
     addAtPoint(.init(-half.x, -half.y, half.z))
+}
+
+public extension Entity {
+    /// Returns the SwiftGodot Object associated with this RealityKit Entity.
+    var godotNode: SwiftGodot.Node? {
+        components[GodotNode.self]?.node
+    }
+}
+
+fileprivate struct AudioToProcess {
+    var instanceId: Int64
+    var state: Int64
+    var flags: Int64
+    var from_pos: Double
 }
