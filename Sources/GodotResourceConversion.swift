@@ -99,20 +99,38 @@ class TextureEntry: ResourceEntry<SwiftGodot.Texture, RealityKit.TextureResource
             }
              */
         } else if let godotTex = godotResource as? SwiftGodot.Texture2D {
-            if let projectContext = resourceCache.projectContext {
-                let resourcePath = godotTex.resourcePath
-                if !resourcePath.isEmpty {
-                    do {
-                        return try .load(contentsOf: projectContext.fileUrl(forGodotResourcePath: resourcePath))
-                    } catch {
-                        logError("loading texture with resourcePath: \(resourcePath) - \(error)")
-                    }
-                } else {
-                    logError("Texture2D had empty resourcePath")
-                }
-            } else {
+            guard let projectContext = resourceCache.projectContext else {
                 logError("projectContext not set in ResourceCache")
+                return nil
             }
+            let resourcePath = godotTex.resourcePath
+            if resourcePath.isEmpty {
+                logError("Texture2D had empty resourcePath")
+                return nil
+            }
+            
+            #if false
+            if #available(visionOS 2.0, *) {
+                if let resource = ResourceLoader.load(path: resourcePath) {
+                    if let cTex = resource as? CompressedTexture2D {
+                        if let image = cTex.getImage() {
+                            let packedData = image.getData()
+                            if let data = packedData.asDataNoCopy() {
+                                let s = String(decoding: data.prefix(100), as: Unicode.ASCII.self)
+                                print(s)
+                            }
+                        }
+                    }
+                }
+            }
+            #endif
+
+            do {
+                return try .load(contentsOf: projectContext.fileUrl(forGodotResourcePath: resourcePath))
+            } catch {
+                logError("loading texture with resourcePath: \(resourcePath)", error)
+            }
+
         }
             
         return nil

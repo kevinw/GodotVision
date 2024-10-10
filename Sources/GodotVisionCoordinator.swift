@@ -96,14 +96,19 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     // we debounce ratio mismatch error log so we only check the ratio when the visionOS volume size settles
     // one other note, visionOS clamps volume size in all dimensions to 0.2352 to 1.9852
     public func changeScaleIfVolumeSizeChanged(_ volumeSize: simd_double3) {
-        if volumeSize != realityKitVolumeSize {
-            realityKitVolumeSize = volumeSize
-            let ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
-            godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
-            volumeRatioDebouncer.debounce {
-                if !(ratio.x.isApproximatelyEqualTo(ratio.y) && ratio.y.isApproximatelyEqualTo(ratio.z)) {
-                    logError("expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off.")
-                }
+        if volumeSize == realityKitVolumeSize {
+            return
+        }
+        realityKitVolumeSize = volumeSize
+        let ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
+        godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
+        volumeRatioDebouncer.debounce {
+            let epsilon: Float = 0.0001
+            if !(ratio.x.isApproximatelyEqualTo(ratio.y, epsilon: epsilon) && ratio.y.isApproximatelyEqualTo(ratio.z, epsilon: epsilon)) {
+                logError("expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off:\n" +
+                         "  realityKitVolumeSize: \(self.realityKitVolumeSize)\n" +
+                         "  volumeCameraBoxSize:  \(self.volumeCameraBoxSize)\n" +
+                         "  ratio:                \(ratio))")
             }
         }
     }
@@ -272,7 +277,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
     }
 
-    @MainActor private func onNodeAdded(_ node: SwiftGodot.Node) {
+    private func onNodeAdded(_ node: SwiftGodot.Node) {
         let isRoot = node.getParent() == node.getTree()?.root
 
         // TODO: Hack to get around the fact that the nodes coming in don't cast properly as their subclass yet. outside of this signal handler they do, so we store the id for later. :SignalsWithNodeArguments
@@ -318,7 +323,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         changeScaleIfVolumeSizeChanged(realityKitVolumeSize)
     }
     
-    @MainActor
     func resetRealityKit() {
         for (godotInstanceId, _) in godotInstanceIDToEntity {
             godotInstanceIDsRemovedFromTree.insert(UInt(godotInstanceId))
@@ -834,12 +838,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         obj.emitSignal(spatial_drag, Variant(dict))
 
-        if shareModel.automaticallyShareInput, let node = obj as? Node {
-            let nodePathString = node.getPath().description
-
+        if shareModel.automaticallyShareInput {
+            let nodePathString = obj.getPath().description
             let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
             let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_drag", params: params)
-            self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
+            shareModel.sendInput(inputMessage, reliable: phase != "changed")
         }
 
         if ended {
@@ -966,12 +969,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         obj.emitSignal(spatial_rotate3D, Variant(dict))
 
-        if shareModel.automaticallyShareInput, let node = obj as? Node {
-            let nodePathString = node.getPath().description
-
+        if shareModel.automaticallyShareInput {
+            let nodePathString = obj.getPath().description
             let params: SpatialDragParams = .init(global_transform: .init(gdGlobalTransform), start_global_transform: .init(gdStartGlobalTransform), phase: phase)
             let inputMessage: InputMessage<SpatialDragParams> = .init(nodePath: nodePathString, signalName: "spatial_rotate3D", params: params)
-            self.shareModel.sendInput(inputMessage, reliable: phase != "changed")
+            shareModel.sendInput(inputMessage, reliable: phase != "changed")
         }
 
         if ended {
@@ -1087,7 +1089,6 @@ class GodotProjectContext {
         getGodotProjectURL().absoluteString.removingStringPrefix("file://")
     }
 }
-
 
 
 struct GodotVisionDraggable: Component {

@@ -64,6 +64,10 @@ func logError(_ error: any Error, functionName: String = #function) {
     print("⚠️ \(stripFunctionName(functionName)) ERROR: \(error)")
 }
 
+func logError(_ message: String, _ error: any Error, functionName: String = #function) {
+    print("⚠️ \(stripFunctionName(functionName)) ERROR: \(message) - \(error)")
+}
+
 func doLoggingErrors<R>(_ block: () throws -> R, functionName: String = #function) -> R? {
     do {
         return try block()
