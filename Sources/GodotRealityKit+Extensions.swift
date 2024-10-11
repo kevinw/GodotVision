@@ -127,7 +127,7 @@ extension SwiftGodot.Vector3 {
 
 extension Float {
     func isApproximatelyEqualTo(_ f: Self, epsilon: Float = 0.000001) -> Bool {
-        abs(self - f) < FLT_EPSILON
+        abs(self - f) < epsilon
     }
 }
 
