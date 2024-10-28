@@ -74,13 +74,7 @@ public struct GodotVisionRealityViewModifier: ViewModifier {
             //.gesture(magnifyGesture)
             //.gesture(magnifyGesture.exclusively(before: tapGesture))
             .gesture(rotateGesture3D.simultaneously(with: dragGesture).simultaneously(with: magnifyGesture).exclusively(before: tapGesture))
-            
-            .onDisappear {
-                coordinator.viewDidDisappear()
-            }
-        
-            .onChange(of: scenePhase) { _, phase in
-                coordinator.scenePhase = phase
-            }
+
+
     }
 }

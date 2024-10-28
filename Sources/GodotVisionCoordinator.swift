@@ -38,14 +38,16 @@ struct AudioStreamPlay {
     var retryCount = 0
 }
 
+
 public class GodotVisionCoordinator: NSObject, ObservableObject {
-    
     @Published public var paused: Bool = false
     public var sceneTree: SceneTree? = nil /// The main Godot SceneTree object.
     public var extraScale: Float = 1.0
     public var extraOffset: simd_float3 = .zero
     public var scenePhase: ScenePhase = .active
     
+
+
     /// Allow the user to set how many physics ticks per second (90 is the normal FPS of the vision headset)
     public var physicsTicksPerSecond: Int {
         get {
@@ -103,7 +105,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let ratio  = simd_float3(realityKitVolumeSize) / volumeCameraBoxSize
         godotToRealityKitRatio = max(max(ratio.x, ratio.y), ratio.z)
         volumeRatioDebouncer.debounce {
-            let epsilon: Float = 0.0001
+            let epsilon: Float = 0.01
             if !(ratio.x.isApproximatelyEqualTo(ratio.y, epsilon: epsilon) && ratio.y.isApproximatelyEqualTo(ratio.z, epsilon: epsilon)) {
                 logError("expected the proportions of the RealityKit volume to match the godot volume! the camera volume may be off:\n" +
                          "  realityKitVolumeSize: \(self.realityKitVolumeSize)\n" +
@@ -115,13 +117,15 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
     @MainActor
     public func reloadScene() {
-        print("reloadScene currently doesn't work for loading a new version of the scene saved from the editor, since Xcode copies the Godot_Project into the application's bundle only once at build time.")
-        resetRealityKit()
-        if let sceneFilePath = self.sceneTree?.currentScene?.sceneFilePath {
-            changeSceneToFile(atResourcePath: sceneFilePath)
-        } else {
+        // print("reloadScene currently doesn't work for loading a new version of the scene saved from the editor, since Xcode copies the Godot_Project into the application's bundle only once at build time.")
+        
+        guard let sceneFilePath = self.sceneTree?.currentScene?.sceneFilePath else {
             logError("cannot reload, no .sceneFilePath")
+            return
         }
+        
+        resetRealityKit()
+        changeSceneToFile(atResourcePath: sceneFilePath)
     }
 
     @MainActor
@@ -341,11 +345,11 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
     var sharePlayEnabled: Bool { shareModel.activityIdentifier != nil }
 
     @MainActor
-    public func setupRealityKitScene(_ content: RealityViewContent,
+    @discardableResult
+    public func setupRealityKitScene(_ rootEntity: Entity,
                                      volumeSize: simd_double3,
                                      projectFileDir: String? = nil,
-                                     sharePlayActivityId: String? = nil,
-                                     loadScene: String? = nil) -> Entity
+                                     sharePlayActivityId: String? = nil) -> Entity
     {
         projectContext.projectFolderName = projectFileDir ?? DEFAULT_PROJECT_FOLDER_NAME
         resourceCache.projectContext = projectContext
@@ -363,27 +367,18 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
 
         realityKitVolumeSize = volumeSize
 
-        if SHOW_CORNERS { addCornersToRealityKitContent(content, volumeSize: volumeSize) }
-
-        // Register a per-frame RealityKit update function.
-        eventSubscription = content.subscribe(to: SceneEvents.Update.self, realityKitPerFrameTick)
-
         // Create a root Entity to store all our mirrored Godot nodes-turned-RealityKit entities.
         godotEntitiesParent.name = "GODOTRK_ROOT"
         godotEntitiesScale.addChild(godotEntitiesParent)
 
         // A root of that entity will also apply scale.
         godotEntitiesScale.name = "GODOTRK_SCALE"
-        content.add(godotEntitiesScale)
+        rootEntity.addChild(godotEntitiesScale)
         
-        if let loadScene {
-            changeSceneToFile(atResourcePath: loadScene)
-        }
-
         return godotEntitiesParent
     }
 
-    public func viewDidDisappear() {
+    public func cleanup() {
         print("Cleaning up GodotVisionCoordinator.")
 
         if let eventSubscription {
@@ -580,23 +575,34 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         return entity
     }
     
-    private func realityKitPerFrameTick(_ event: SceneEvents.Update) {
-        if scenePhase != .active {
+    public var perFrameTick: ((_ deltaTime: TimeInterval) -> Void)? = nil
+    
+    public func realityKitPerFrameTick(_ event: SceneEvents.Update) {
+        if paused {
             return
         }
         
         Input.flushBufferedEvents() // our iOS loop doesn't currently do this, so flush events manually
-
-        if !paused && stepGodotFrame() {
-            print("GODOT HAS QUIT")
+        
+        let godotDidQuit = stepGodotFrame()
+        
+        defer {
+            if godotDidQuit {
+                print("GODOT HAS QUIT")
+                paused = true
+            }
         }
 
+        perFrameTick?(event.deltaTime)
+
+        // update playing audio pitches
         for (godotAudioStreamPlayer, pbCon) in audioPlaybackControllers {
             if pbCon.isPlaying, godotAudioStreamPlayer.isPlaying() {
                 pbCon.speed = godotAudioStreamPlayer.pitchScale
             }
         }
 
+        // handle new nodes
         for (id, isRoot) in nodeIdsForNewlyEnteredNodes {
             guard let node = GD.instanceFromId(instanceId: id) as? Node else {
                 logError("No new Node instance for id \(id)")
@@ -673,6 +679,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             godotInstanceIDsRemovedFromTree.removeAll()
         }
 
+        // new audio plays
         do {
             let newAudios = audioToProcess
             audioToProcess.removeAll()
@@ -757,8 +764,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
             godotEntitiesParent.transform = .init(volumeCamera.globalTransform.affineInverse())
         }
 
-        let newScale = godotToRealityKitRatio * extraScale
-        godotEntitiesScale.scale = .one * newScale
+        godotEntitiesScale.scale = .one * godotToRealityKitRatio * extraScale
         godotEntitiesScale.position = extraOffset
     }
     
@@ -912,8 +918,6 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         }
     }
     
-    var rotateState = "inactive"
-    
     /// A visionOS drag is starting or being updated. We emit a signal with information about the gesture so that Godot code can respond.
     func receivedRotate3D(_ value: EntityTargetValue<RotateGesture3D.Value>, ended: Bool = false) {
         let entity = value.entity
@@ -958,6 +962,7 @@ public class GodotVisionCoordinator: NSObject, ObservableObject {
         let gdStartGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: .init(origRotation!), translation: .init(origPos!)), from: nil))
         let gdGlobalTransform = Transform3D(godotEntitiesParent.convert(transform: .init(scale: scale, rotation: newOrientation, translation: .init(origPos!)), from: nil))
         let phase = ended ? "ended" : (began ? "began" : "changed")
+      
 
         // pass a dictionary of values to the drag signal
         let dict: GDictionary = .init()
@@ -1219,30 +1224,6 @@ func updateCollision(entity: Entity, count: Int = 0) {
     var collision = CollisionComponent(shapes: [.generateBox(size: bounds.extents)])
     collision.filter = .init(group: [], mask: []) // disable for collision detection
     entity.components.set(collision)
-}
-
-fileprivate func addCornersToRealityKitContent(_ content: RealityViewContent, volumeSize: simd_double3) {
-    // Place some cubes to show the edges of the realitykit volume.
-    let volumeDebugParent = Entity()
-    volumeDebugParent.name = "volumeDebugParent"
-    
-    let debugCube = MeshResource.generateBox(size: 0.1)
-    func addAtPoint(_ p: simd_float3) {
-        let e = ModelEntity(mesh: debugCube, materials: [whiteNonMetallic])
-        e.position = p
-        content.add(e)
-    }
-    
-    let half = simd_float3(volumeSize * 0.5)
-    addAtPoint(.init(half.x, half.y, -half.z))
-    addAtPoint(.init(half.x, -half.y, -half.z))
-    addAtPoint(.init(-half.x, -half.y, -half.z))
-    addAtPoint(.init(-half.x, -half.y, -half.z))
-    
-    addAtPoint(.init(half.x, half.y, half.z))
-    addAtPoint(.init(half.x, -half.y, half.z))
-    addAtPoint(.init(-half.x, -half.y, half.z))
-    addAtPoint(.init(-half.x, -half.y, half.z))
 }
 
 public extension Entity {
