@@ -1,3 +1,8 @@
+# This Project is Archived
+
+> [!IMPORTANT]  
+> Native visionOS support is landing in Godot Engine. Check out the [latest Godot 4.5 dev 5 snapshot](https://godotengine.org/article/dev-snapshot-godot-4-5-dev-5/#native-visionos-support) for details on Apple's contributions back to Godot to bring native XR support for visionOS. This project is going into "archive" mode.
+
 # GodotVision
 
 Godot headless on visionOS, rendered with RealityKit, so you can create shared-space visionOS experiences from Godot.
